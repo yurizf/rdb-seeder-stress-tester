@@ -1,0 +1,81 @@
+{
+  "seed" : [
+    {
+      "table": "table_1",
+      "records": 1000000,
+      "insertThreads": 12,
+      "fields":
+      [
+        {"id": "id_1",
+          "field": "a",
+          "field_type": "int",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 35000,
+          "cardinality": 10000
+        },
+        {
+          "id": "id_2",
+          "field": "b",
+          "field_type": "string",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 2048,
+          "cardinality": 1000
+        }
+      ]
+    },
+    {
+      "table": "table_2",
+      "records": 1100000,
+      "insertThreads": 10,
+      "fields":
+      [
+        {"id": "id_1",
+          "field": "a",
+          "field_type": "int",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 100000,
+          "cardinality": 10000
+        },
+        {
+          "id": "id_2",
+          "field": "b",
+          "field_type": "string",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 8000,
+          "cardinality": 1000
+        }
+      ]
+    }
+  ],
+  "stressConfig": {
+    "sqls_to_file": "./sqls-001.txt",
+    "sql":
+    [
+      {
+        "id": "statement one",
+        "statement": "SELECT a,b FROM table_1 WHERE a in ( {\"table\":\"table_1\", \"field\":\"a\", \"minlen\": 30, \"maxlen\": 100}) AND b in({\"table\":\"table_1\", \"field\":\"b\", \"minlen\": 10, \"maxlen\": 40})",
+        "repeat" : 10000,
+        "threads": 10,
+        "comment": "the in list {escaped json} will be randomly populated from the seeded data"
+      },
+      {
+        "id": "statement two",
+        "statement": "SELECT a,b FROM table_2 WHERE a in ( {\"table\":\"table_1\", \"field\":\"a\", \"minlen\": 10, \"maxlen\": 30}) AND b in({\"table\":\"table_2\", \"field\":\"b\", \"minlen\": 10, \"maxlen\": 90})",
+        "repeat" : 10000,
+        "threads": 8,
+        "comment": "the in list {escaped json} will be randomly populated from the seeded data"
+      },
+      {
+        "id": "join",
+        "statement": "SELECT count(1) FROM table_1 x JOIN table_2 y ON x.a=y.a WHERE x.a in ( {\"table\":\"table_1\", \"field\":\"a\", \"minlen\": 10, \"maxlen\": 20}) AND x.b in({\"table\":\"table_1\", \"field\":\"b\", \"minlen\": 5, \"maxlen\": 30})",
+        "repeat" : 100,
+        "threads": 10,
+        "comment": "the in list {escaped json} will be randomly populated from the seeded data"
+      }
+    ]
+  }
+}
