@@ -22,7 +22,8 @@ func App() *cli.App {
 	}
 
 	app.Commands = []*cli.Command{
-		seed.Command,
+		seed.Seed,
+		seed.Test,
 	}
 
 	return app

@@ -44,8 +44,9 @@ type sql struct {
 type config struct {
 	Seed []tableSeed
 	Test struct {
-		Save_to_file string `json:"save-to-file"`
-		Sql          []sql  `json:"sql"`
+		SaveToFile string `json:"save_to_file"`
+		RunNow     bool   `json:"run_now"`
+		Sql        []sql  `json:"sql"`
 	}
 }
 
@@ -70,7 +71,18 @@ func seed(cc *cli.Context) error {
 	var config config
 	if err = json.Unmarshal(b, &config); err != nil {
 		log.Fatal("Failed to load from json `%s`: %s", path, err)
+		return err
 	}
+
+	err = doSeed(cc, config)
+	if err != nil {
+		log.Fatal("Failed to seed %s", err)
+		return err
+	}
+
+}
+
+func doSeed(cc *cli.Context, config config) error {
 
 	// table -> []map[fieldName]any: int | string
 	var seedMap syncmap.Map
@@ -119,7 +131,7 @@ func seed(cc *cli.Context) error {
 	}
 
 	// generate tests
-	f, err := os.Create(config.Test.Save_to_file)
+	f, err := os.Create(config.Test.SaveToFile)
 	re := regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
 	for _, sql := range config.Test.Sql {
 		f.WriteString("threads=" + strconv.Itoa(sql.Threads) + "\n")
@@ -160,8 +172,9 @@ func seed(cc *cli.Context) error {
 
 				token := sb.String()[:-2]
 				sql.Statement = strings.ReplaceAll(sql.Statement, jsonStrings[j], token)
-				f.WriteString(sql.Statement + "\n")
 			}
+
+			f.WriteString(sql.Statement + "\n")
 		}
 	}
 
@@ -174,7 +187,7 @@ func seedTablePg(cc *cli.Context, wg sync.WaitGroup, fields []string, sql string
 	}
 	sql = sql[:len(sql)-1] + ")"
 
-	db, err := pgx.Connect(cc.Context, cc.String("db-url"))
+	db, _ := pgx.Connect(cc.Context, cc.String("db-url"))
 	defer func() { db.Close(cc.Context); wg.Done() }()
 
 	for _, m := range fieldValues {
@@ -191,7 +204,7 @@ func seedTableMySQL(cc *cli.Context, wg sync.WaitGroup, fields []string, sql str
 	sql += strings.Repeat("?", len(fields))
 	sql = sql[:len(sql)-1] + ")"
 
-	db, err := sqlx.Connect("mysql", cc.String("db-url"))
+	db, _ := sqlx.Connect("mysql", cc.String("db-url"))
 	defer func() { db.Close(); wg.Done() }()
 
 	for _, m := range fieldValues {
@@ -201,7 +214,7 @@ func seedTableMySQL(cc *cli.Context, wg sync.WaitGroup, fields []string, sql str
 		}
 		// ExecContext executes a query without returning any rows.
 		// The args are for any placeholder parameters in the query.
-		res, err := db.ExecContext(cc.Context, sql, values...)
+		db.ExecContext(cc.Context, sql, values...)
 	}
 
 }
