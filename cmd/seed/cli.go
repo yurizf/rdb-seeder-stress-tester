@@ -35,7 +35,7 @@ var Test = &cli.Command{
 	Name:        "seed",
 	Description: "Collect aws cost metrics.",
 	Usage:       "seeder-tester test",
-	Action:      test, //function
+	Action:      stress, //function
 	Flags: []cli.Flag{
 		&cli.PathFlag{
 			Name:    "input-file",

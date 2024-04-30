@@ -8,10 +8,10 @@ import (
 	"os"
 )
 
-func test(cc *cli.Context) error {
+func stress(cc *cli.Context) error {
 	path := cc.Path("input-file")
 	if len(path) == 0 {
-		return fmt.Errorf("No input file path given")
+		return fmt.Errorf("no input file path given")
 	}
 
 	file, err := os.Open(path)
@@ -31,4 +31,5 @@ func test(cc *cli.Context) error {
 
 	}
 
-
+	return nil
+}

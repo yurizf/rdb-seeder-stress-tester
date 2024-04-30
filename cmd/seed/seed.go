@@ -3,8 +3,6 @@ package seed
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/jackc/pgx/v4"
-	"github.com/jmoiron/sqlx"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/sync/syncmap"
 	"log"
@@ -57,10 +55,14 @@ type whereListDef struct {
 	MaxLen int    `json:"maxLen"`
 }
 
+type db interface {
+	seedTable(cc *cli.Context, wg *sync.WaitGroup, fields []string, sql string, s *tableSeed, fieldValues []map[string]any)
+}
+
 func seed(cc *cli.Context) error {
 	path := cc.Path("config")
 	if len(path) == 0 {
-		return fmt.Errorf("No config path given")
+		return fmt.Errorf("no config path given")
 	}
 
 	b, err := os.ReadFile(path)
@@ -74,22 +76,23 @@ func seed(cc *cli.Context) error {
 		return err
 	}
 
-	err = doSeed(cc, config)
+	dbSeeder := newDB()
+	err = doSeed(cc, dbSeeder, config)
 	if err != nil {
 		log.Fatal("Failed to seed %s", err)
 		return err
 	}
-
+	return nil
 }
 
-func doSeed(cc *cli.Context, config config) error {
+func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 
 	// table -> []map[fieldName]any: int | string
 	var seedMap syncmap.Map
 	// table -> map[filedName[->fieldType. Need it to know if we need to quote strings
-	tableFieldTypes := make(map[string](map[string]string), len(config.Seed))
+	tableFieldTypes := make(map[string]map[string]string, len(config.Seed))
 	for _, seed := range config.Seed {
-		genOneTable(seedMap, &seed)
+		genOneTable(&seedMap, &seed)
 		tableFieldTypes[seed.Table] = make(map[string]string, len(seed.Fields))
 		for _, field := range seed.Fields {
 			tableFieldTypes[seed.Table][field.Field] = field.FieldType
@@ -102,36 +105,28 @@ func doSeed(cc *cli.Context, config config) error {
 	}
 
 	for _, seed := range config.Seed {
-		sql := "INSERT INTO " + seed.Table + " ("
+		sqlStem := "INSERT INTO " + seed.Table + " ("
 		fields := make([]string, len(seed.Fields))
 
 		for i, f := range seed.Fields {
-			sql += f.Field + ", "
+			sqlStem += f.Field + ", "
 			fields[i] = f.Field
 		}
-		sql = sql[:len(sql)-1] + ") VALUES ("
+		sqlStem = sqlStem[:len(sqlStem)-1] + ") VALUES ("
 
 		slice, _ := seedMap.Load(seed.Table)
 		typedSlice := slice.([]map[string]any)
 
 		var wg sync.WaitGroup
-		switch cc.String("db-type") {
-		case "mysql":
-			for i := 0; i < seed.Threads; i++ {
-				wg.Add(1)
-				go seedTableMySQL(cc, wg, fields, sql, &seed, typedSlice[i+seed.Records/seed.Threads:])
-			}
-
-		case "postgres":
-			for i := 0; i < seed.Threads; i++ {
-				wg.Add(1)
-				go seedTablePg(cc, wg, fields, sql, &seed, typedSlice[i+seed.Records/seed.Threads:])
-			}
+		for i := 0; i < seed.Threads; i++ {
+			go dbSeeder.seedTable(cc, &wg, fields, sqlStem, &seed, typedSlice[i+seed.Records/seed.Threads:])
 		}
+
+		wg.Wait()
 	}
 
 	// generate tests
-	f, err := os.Create(config.Test.SaveToFile)
+	f, _ := os.Create(config.Test.SaveToFile)
 	re := regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
 	for _, sql := range config.Test.Sql {
 		f.WriteString("threads=" + strconv.Itoa(sql.Threads) + "\n")
@@ -170,7 +165,8 @@ func doSeed(cc *cli.Context, config config) error {
 					sb.WriteString("\", ")
 				}
 
-				token := sb.String()[:-2]
+				token := sb.String()
+				tokn = token[:len(token)-2]
 				sql.Statement = strings.ReplaceAll(sql.Statement, jsonStrings[j], token)
 			}
 
@@ -179,44 +175,6 @@ func doSeed(cc *cli.Context, config config) error {
 	}
 
 	return nil
-}
-
-func seedTablePg(cc *cli.Context, wg sync.WaitGroup, fields []string, sql string, s *tableSeed, fieldValues []map[string]any) {
-	for i, _ := range fields {
-		sql += "$" + fmt.Sprint(i+1) + ", "
-	}
-	sql = sql[:len(sql)-1] + ")"
-
-	db, _ := pgx.Connect(cc.Context, cc.String("db-url"))
-	defer func() { db.Close(cc.Context); wg.Done() }()
-
-	for _, m := range fieldValues {
-		values := make([]any, len(m))
-		for j, f := range fields {
-			values[j] = m[f]
-		}
-		db.Exec(cc.Context, sql, values...)
-	}
-
-}
-
-func seedTableMySQL(cc *cli.Context, wg sync.WaitGroup, fields []string, sql string, s *tableSeed, fieldValues []map[string]any) {
-	sql += strings.Repeat("?", len(fields))
-	sql = sql[:len(sql)-1] + ")"
-
-	db, _ := sqlx.Connect("mysql", cc.String("db-url"))
-	defer func() { db.Close(); wg.Done() }()
-
-	for _, m := range fieldValues {
-		values := make([]any, len(m))
-		for j, f := range fields {
-			values[j] = m[f]
-		}
-		// ExecContext executes a query without returning any rows.
-		// The args are for any placeholder parameters in the query.
-		db.ExecContext(cc.Context, sql, values...)
-	}
-
 }
 
 // https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
@@ -233,7 +191,7 @@ func randString(minLen int, maxLen int) string {
 }
 
 // seedMap: table->[]map[field]any: string|int
-func genOneTable(seedMap syncmap.Map, s *tableSeed) {
+func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 	var records []map[string]any
 
 	slice, ok := seedMap.Load(s.Table)
