@@ -31,7 +31,7 @@ var Seed = &cli.Command{
 	},
 }
 
-var Test = &cli.Command{
+var Stress = &cli.Command{
 	Name:        "seed",
 	Description: "Collect aws cost metrics.",
 	Usage:       "seeder-tester test",

@@ -27,7 +27,7 @@
       ]
     }
     ],
-  "test": {
+  "stressConfig": {
       "save_to_file": "./statements.txt",
       "run_now": true,
       "sql":
@@ -37,7 +37,7 @@
           "statement": "SELECT a,b,c FROM mytable a JOIN mytable_1 b ON a.a = b.b WHERE a.myfield in ( {\"table\":\"NyTable\", \"field\":\"myfield\", \"minlen\": 40, \"maxlen\": 100} )",
           "repeat" : 10000,
           "threads": 100,
-          "comment": "condtion in ${} will be randomly populated from the seeded data"
+          "comment": "the in list {escaped json} will be randomly populated from the seeded data"
         }
       ]
   }

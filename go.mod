@@ -5,6 +5,7 @@ go 1.21
 require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/jmoiron/sqlx v1.4.0
+	github.com/rs/zerolog v1.15.0
 	github.com/urfave/cli/v2 v2.27.2
 	golang.org/x/sync v0.3.0
 )
