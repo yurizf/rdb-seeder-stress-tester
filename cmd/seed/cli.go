@@ -32,7 +32,7 @@ var Seed = &cli.Command{
 }
 
 var Stress = &cli.Command{
-	Name:        "seed",
+	Name:        "stress",
 	Description: "Collect aws cost metrics.",
 	Usage:       "seeder-tester test",
 	Action:      stress, //function

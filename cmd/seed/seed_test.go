@@ -1,8 +1,12 @@
 package seed
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/sync/syncmap"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,13 +15,35 @@ import (
 type mockDB struct{}
 
 func (db *mockDB) seedTable(cc *cli.Context,
+	threadID string,
+	statsMap *syncmap.Map,
 	wg *sync.WaitGroup,
 	fields []string,
 	sql string,
 	fieldValues []map[string]any) {
 
 	defer wg.Done()
-	fmt.Println("seeding table", sql, fields, fieldValues)
+	fmt.Println("seeding table", threadID, sql, fields, fieldValues)
+	statsMap.Store(threadID, stats{0,
+		0,
+		0,
+		0,
+		0,
+	})
+}
+
+func (db *mockDB) writeSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
+
+	for i, js := range jsonStrings {
+		var def whereListDef
+		json.Unmarshal([]byte(js), &def)
+		commasCount := strings.Count(tokens[i], ",")
+		if commasCount+1 < def.MinLen || commasCount+1 > def.MaxLen {
+			return fmt.Errorf("wrong where list size %d", commasCount+1)
+		}
+	}
+
+	return nil
 }
 
 func Test_doSeed(t *testing.T) {
@@ -94,14 +120,14 @@ func Test_doSeed(t *testing.T) {
 						Sql: []sql{
 							{
 								ID:        "sql-query-1",
-								Statement: `SELECT * FROM Table-1 WHERE Field_1_of_Table_1 in ( {"table":"Table_1", "field":"Field_1_of_Table_1", "minlen": 10, "maxlen": 30}`,
+								Statement: `SELECT * FROM Table_1 WHERE Field_1_of_Table_1 in ( {"table":"Table_1", "field":"Field_1_of_Table_1", "minlen": 10, "maxlen": 30})`,
 								Repeat:    30,
 								Threads:   5,
 								Comment:   "blah",
 							},
 							{
 								ID:        "sql-query-1",
-								Statement: `SELECT * FROM Table-2 WHERE Field_2_of_Table_2 in ({"table":"Table_2", "field": "Field_2_of_Table_2", "minlen": 20, "maxlen": 40}`,
+								Statement: `SELECT * FROM Table-2 WHERE Field_2_of_Table_2 in ({"table":"Table_2", "field": "Field_2_of_Table_2", "minlen": 20, "maxlen": 40})`,
 								Repeat:    25,
 								Threads:   7,
 								Comment:   "blah",

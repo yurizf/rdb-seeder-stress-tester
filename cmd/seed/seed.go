@@ -8,11 +8,9 @@ import (
 	"log"
 	"math/rand"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
 type fieldSeed struct {
@@ -47,8 +45,8 @@ type stressConfig struct {
 }
 
 type config struct {
-	Seed   []tableSeed
-	Stress stressConfig
+	Seed   []tableSeed  `json:"seed"`
+	Stress stressConfig `json:"stressConfig"`
 }
 
 type whereListDef struct {
@@ -59,7 +57,15 @@ type whereListDef struct {
 }
 
 type db interface {
-	seedTable(cc *cli.Context, wg *sync.WaitGroup, fields []string, sql string, fieldValues []map[string]any)
+	seedTable(cc *cli.Context,
+		threadID string,
+		statsMap *syncmap.Map,
+		wg *sync.WaitGroup,
+		fields []string,
+		sqlStem string,
+		fieldValues []map[string]any)
+
+	writeSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error
 }
 
 // to allow DB mocking
@@ -91,15 +97,21 @@ func seed(cc *cli.Context) error {
 }
 
 func doSeed(cc *cli.Context, dbSeeder db, config config) error {
+	// initialize rand
+	// Deprecated: As of Go 1.20 there is no reason to call Seed with a random value.
+	// rand.Seed(time.Now().UTC().UnixNano())
 
-	rand.Seed(time.Now().UTC().UnixNano())
-	// table -> []map[fieldName]any: int | string
+	// table -> []map[fieldName]any: int | string. To keep all generated values per table
 	var seedMap syncmap.Map
-	// table -> map[filedName[->fieldType. Need it to know if we need to quote strings
+	// table -> map[filedName]->fieldType. Need it to know if we need to do quotes: string or not
 	tableFieldTypes := make(map[string]map[string]string, len(config.Seed))
+
+	// loop by tables
 	for _, seed := range config.Seed {
+		// generate "this table" -> []map[fieldName]-> value of type any(int or string)
 		genOneTable(&seedMap, &seed)
 		tableFieldTypes[seed.Table] = make(map[string]string, len(seed.Fields))
+		// populate tableFieldTypes for the current table
 		for _, field := range seed.Fields {
 			tableFieldTypes[seed.Table][field.Field] = field.FieldType
 		}
@@ -110,12 +122,14 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		}
 	}
 
+	var statsMap syncmap.Map
+	// by tables
 	for _, seed := range config.Seed {
 		sqlStem := "INSERT INTO " + seed.Table + " ("
 		fields := make([]string, len(seed.Fields))
 
 		for i, f := range seed.Fields {
-			sqlStem += f.Field + ", "
+			sqlStem += f.Field + ","
 			fields[i] = f.Field
 		}
 		sqlStem = sqlStem[:len(sqlStem)-1] + ") VALUES ("
@@ -124,81 +138,31 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		typedSlice := slice.([]map[string]any)
 
 		var wg sync.WaitGroup
+		// spawn seed.Threads, each to insert seed.Records records from typedSlice.
 		for i := 0; i < seed.Threads; i++ {
 			wg.Add(1)
-			go dbSeeder.seedTable(cc, &wg, fields, sqlStem, typedSlice[i+seed.Records/seed.Threads:])
+			go dbSeeder.seedTable(cc,
+				fmt.Sprintf("thread-%d", i),
+				&statsMap,
+				&wg,
+				fields,
+				sqlStem,
+				// make each thread insert "different" values
+				typedSlice[i+seed.Records/seed.Threads:])
 		}
 
 		wg.Wait()
 	}
 
-	// generate tests
-	f, _ := os.Create(config.Stress.SaveToFile)
-	re := regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
-	for _, sql := range config.Stress.Sql {
-		f.WriteString(THREADS + strconv.Itoa(sql.Threads) + "\n")
+	// print stats for each thread
+	statsMap.Range(func(k, v any) bool {
+		threadID := k.(string)
+		stats := v.(stats)
+		fmt.Println(threadID, stats.min, stats.avg, stats.max, stats.count)
+		return true
+	})
 
-		jsonStrings := re.FindAllString(sql.Statement, -1)
-		defs := make([]whereListDef, len(jsonStrings))
-
-		for i, sql := range jsonStrings {
-			json.Unmarshal([]byte(sql), &defs[i])
-		}
-
-		// build the list of queries
-		for i := 0; i < sql.Repeat; i++ {
-			/*
-				sanity check: assignment is deep copy. Despite what's said here
-				https://stackoverflow.com/questions/65419268/how-to-deep-copy-a-string-in-go
-				x := "abcd"
-				y := x
-				p := &y
-				y = strings.ReplaceAll(y, "bc", "xy")
-				fmt.Printf("%P %P %P %s %s", &x, p, &y, x, y)
-				%!P(*string=0xc0000140b0) %!P(*string=0xc0000140c0) %!P(*string=0xc0000140c0) abcd axyd
-
-			*/
-			outSQL := sql.Statement
-			for j, def := range defs {
-				token := generateOneINList(def, seedMap, tableFieldTypes)
-				outSQL = strings.ReplaceAll(outSQL, jsonStrings[j], token)
-			}
-
-			f.WriteString(outSQL + "\n")
-		}
-	}
-
-	return nil
-}
-
-func generateOneINList(def whereListDef, seedMap syncmap.Map, tableFieldTypes map[string]map[string]string) string {
-
-	// get the length
-	l := rand.Intn(def.MaxLen-def.MinLen+1) + def.MinLen
-	// generate list picking l random elements
-	var sb strings.Builder
-	for i := 0; i < l; i++ {
-		lst, _ := seedMap.Load(def.Table)
-		lstTyped := lst.([]map[string]any)
-		idx := rand.Intn(len(lstTyped))
-		fieldType := tableFieldTypes[def.Table][def.Field]
-		if fieldType == "string" {
-			sb.WriteString(`"`)
-			value := lstTyped[idx][def.Field]
-			valueStr := value.(string)
-			sb.WriteString(valueStr)
-			sb.WriteString(`", `)
-			continue
-		}
-
-		value := lstTyped[idx][def.Field]
-		valueInt := value.(int)
-		sb.WriteString(strconv.Itoa(valueInt))
-		sb.WriteString(", ")
-	}
-
-	token := sb.String()
-	return token[:len(token)-2]
+	return saveSQLSelect(&config, dbSeeder, &seedMap, tableFieldTypes)
 }
 
 // https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
@@ -222,20 +186,27 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 	if ok {
 		records = slice.([]map[string]any)
 	} else {
+		// first time for this table
 		records = make([]map[string]any, 0, s.Records)
 	}
 
+	// for the number of records specified for this table
 	for i := 0; i < s.Records; i++ {
 		m := make(map[string]any)
+		// for each field
 		for _, f := range s.Fields {
 			if len(records) >= f.Cardinality {
+				// if the current record > cardinality, pick a random value already generated
 				m[f.Field] = records[rand.Intn(len(records))][f.Field]
 			} else {
+				// else, generate a new random value
 				switch f.FieldType {
 				case "string":
 					m[f.Field] = randString(f.Min, f.Max)
 				case "int":
 					m[f.Field] = rand.Intn(f.Max-f.Min+1) + f.Min
+				default:
+					log.Fatalf("Invalid %s field type: %s", f.Field, f.FieldType)
 				}
 			}
 		}
@@ -243,4 +214,77 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 		records = append(records, m)
 	}
 	seedMap.Store(s.Table, records)
+}
+
+func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableFieldTypes map[string]map[string]string) error {
+	// generate tests
+	// the output file will look like
+	// threads = sql.Threads
+	// sql.Repeat sql.Statement statements with IN () lists built of previously generated random values
+	f, _ := os.Create(config.Stress.SaveToFile)
+
+	for _, sql := range config.Stress.Sql {
+		f.WriteString(THREADS + strconv.Itoa(sql.Threads) + "\n")
+
+		jsonStrings := re.FindAllString(sql.Statement, -1)
+		defs := make([]whereListDef, len(jsonStrings))
+
+		for i, sql := range jsonStrings {
+			json.Unmarshal([]byte(sql), &defs[i])
+		}
+
+		// build the list of queries
+		for i := 0; i < sql.Repeat; i++ {
+			/*
+				sanity check: assignment is deep copy. Despite what's said here
+				https://stackoverflow.com/questions/65419268/how-to-deep-copy-a-string-in-go
+				x := "abcd"
+				y := x
+				p := &y
+				y = strings.ReplaceAll(y, "bc", "xy")
+				fmt.Printf("%P %P %P %s %s", &x, p, &y, x, y)
+				%!P(*string=0xc0000140b0) %!P(*string=0xc0000140c0) %!P(*string=0xc0000140c0) abcd axyd
+
+			*/
+
+			tokens := make([]string, len(jsonStrings))
+			for j, def := range defs {
+				tokens[j] = generateOneINList(def, seedMap, tableFieldTypes)
+			}
+			dbSeeder.writeSQLSelect(f, sql.Statement, jsonStrings, tokens)
+
+		}
+	}
+	return nil
+}
+
+// whereListDef is from in ( {"table":"table_1", "field":"a", "minlen": 30, "maxlen": 100})
+func generateOneINList(def whereListDef, seedMap *syncmap.Map, tableFieldTypes map[string]map[string]string) string {
+
+	// get the IN list random length
+	l := rand.Intn(def.MaxLen-def.MinLen+1) + def.MinLen
+	// generate list picking l random elements from the values we generated
+	var sb strings.Builder
+	for i := 0; i < l; i++ {
+		lst, _ := seedMap.Load(def.Table)
+		lstTyped := lst.([]map[string]any)
+		idx := rand.Intn(len(lstTyped))
+		fieldType := tableFieldTypes[def.Table][def.Field]
+		if fieldType == "string" {
+			sb.WriteString(`"`)
+			value := lstTyped[idx][def.Field]
+			valueStr := value.(string)
+			sb.WriteString(valueStr)
+			sb.WriteString(`", `)
+			continue
+		}
+
+		value := lstTyped[idx][def.Field]
+		valueInt := value.(int)
+		sb.WriteString(strconv.Itoa(valueInt))
+		sb.WriteString(", ")
+	}
+
+	token := sb.String()
+	return token[:len(token)-2]
 }

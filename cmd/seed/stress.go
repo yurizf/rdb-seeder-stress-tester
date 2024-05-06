@@ -8,13 +8,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 )
 
 const THREADS string = "threads = "
 const POISON_PILL = "POISON_PILL"
 
 type run interface {
-	runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.Map, sql chan string)
+	runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.Map, wg *sync.WaitGroup, sql chan string)
 }
 
 // to allow DB mocking
@@ -46,6 +47,7 @@ func doStress(cc *cli.Context, db run) error {
 
 	threads := 0
 	poisonPills := 0
+	var wg sync.WaitGroup
 	for scanner.Scan() {
 		// get a line
 		s := scanner.Text()
@@ -56,14 +58,21 @@ func doStress(cc *cli.Context, db run) error {
 					sqls <- POISON_PILL
 				}
 				poisonPills = 0
+				// wait till all threads swallow poison pills, one pill per thread
+				wg.Wait()
 			}
 			continue
 		}
 
 		// we get here on a non "threads = " line
 		if threads > 0 {
+
 			for i := 0; i < threads; i++ {
-				go db.runSQLs(cc, fmt.Sprintf("thread-%d", i), &statsMap, sqls)
+				go db.runSQLs(cc,
+					fmt.Sprintf("thread-%d", i),
+					&statsMap,
+					&wg,
+					sqls)
 			}
 			poisonPills = threads
 			threads = 0
