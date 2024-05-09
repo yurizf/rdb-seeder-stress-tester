@@ -29,6 +29,8 @@ func (db *mockDB) seedTable(cc *cli.Context,
 		0,
 		0,
 		0,
+		"",
+		"",
 	})
 }
 
@@ -115,8 +117,7 @@ func Test_doSeed(t *testing.T) {
 						},
 					}, // tableseed
 					Stress: stressConfig{
-						SaveToFile: "./sqls-" + time.Now().Format("20060102150405") + ".sql",
-						RunNow:     false,
+						SaveSQLsToFile: "./sqls-" + time.Now().Format("20060102150405") + ".sql",
 						Sql: []sql{
 							{
 								ID:        "sql-query-1",

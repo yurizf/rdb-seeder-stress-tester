@@ -39,9 +39,8 @@ type sql struct {
 }
 
 type stressConfig struct {
-	SaveToFile string `json:"save_to_file"`
-	RunNow     bool   `json:"run_now"`
-	Sql        []sql  `json:"sql"`
+	SaveSQLsToFile string `json:"sqls_to_file"`
+	Sql            []sql  `json:"sql"`
 }
 
 type config struct {
@@ -221,37 +220,31 @@ func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableField
 	// the output file will look like
 	// threads = sql.Threads
 	// sql.Repeat sql.Statement statements with IN () lists built of previously generated random values
-	f, _ := os.Create(config.Stress.SaveToFile)
+	f, _ := os.Create(config.Stress.SaveSQLsToFile)
 
 	for _, sql := range config.Stress.Sql {
-		f.WriteString(THREADS + strconv.Itoa(sql.Threads) + "\n")
+		if _, err := f.WriteString(THREADS + strconv.Itoa(sql.Threads) + "\n"); err != nil {
+			return err
+		}
 
 		jsonStrings := re.FindAllString(sql.Statement, -1)
 		defs := make([]whereListDef, len(jsonStrings))
 
 		for i, sql := range jsonStrings {
-			json.Unmarshal([]byte(sql), &defs[i])
+			if err := json.Unmarshal([]byte(sql), &defs[i]); err != nil {
+				return err
+			}
 		}
 
 		// build the list of queries
 		for i := 0; i < sql.Repeat; i++ {
-			/*
-				sanity check: assignment is deep copy. Despite what's said here
-				https://stackoverflow.com/questions/65419268/how-to-deep-copy-a-string-in-go
-				x := "abcd"
-				y := x
-				p := &y
-				y = strings.ReplaceAll(y, "bc", "xy")
-				fmt.Printf("%P %P %P %s %s", &x, p, &y, x, y)
-				%!P(*string=0xc0000140b0) %!P(*string=0xc0000140c0) %!P(*string=0xc0000140c0) abcd axyd
-
-			*/
-
 			tokens := make([]string, len(jsonStrings))
 			for j, def := range defs {
 				tokens[j] = generateOneINList(def, seedMap, tableFieldTypes)
 			}
-			dbSeeder.writeSQLSelect(f, sql.Statement, jsonStrings, tokens)
+			if err := dbSeeder.writeSQLSelect(f, sql.Statement, jsonStrings, tokens); err != nil {
+				return err
+			}
 
 		}
 	}

@@ -19,11 +19,13 @@ import (
 type database struct{}
 
 type stats struct {
-	min   time.Duration
-	max   time.Duration
-	total time.Duration
-	count int
-	avg   time.Duration
+	min         time.Duration
+	max         time.Duration
+	total       time.Duration
+	count       int
+	avg         time.Duration
+	shortestSQL string
+	longestSQL  string
 }
 
 var re = regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
@@ -95,6 +97,9 @@ func (db *database) seedTable(cc *cli.Context,
 		}
 
 		count++
+		if count%100 == 0 {
+			fmt.Printf("%s made %d inserts. min time %s max time %s\n", threadID, count, minDuration, maxDuration)
+		}
 
 		duration := time.Since(start)
 		if duration < minDuration {
@@ -112,6 +117,8 @@ func (db *database) seedTable(cc *cli.Context,
 		count,
 		//https://go.dev/play/p/6Pbqrz8ZZ3t
 		totalDuration / time.Duration(count),
+		"",
+		"",
 	})
 }
 
@@ -144,46 +151,57 @@ func (db *database) runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.
 		defer func() { liteDBConn.Close(); wg.Done() }()
 	}
 
-	max := 0 * time.Second
-	min := 999 * time.Hour
+	maxDuration := 0 * time.Second
+	minDuration := 999 * time.Hour
 	count := 0
 	totalDuration := 0 * time.Second
+	shortestSQL := ""
+	longestSQL := ""
 
-	select {
-	case statement := <-sql:
-		if statement == POISON_PILL {
-			statsMap.Store(threadID, stats{min,
-				max,
-				totalDuration,
-				count,
-				//https://go.dev/play/p/6Pbqrz8ZZ3t
-				totalDuration / time.Duration(count),
-			})
-			return
+	for {
+		select {
+		case statement := <-sql:
+			if statement == POISON_PILL {
+				statsMap.Store(threadID, stats{
+					minDuration,
+					maxDuration,
+					totalDuration,
+					count,
+					//https://go.dev/play/p/6Pbqrz8ZZ3t
+					totalDuration / time.Duration(count),
+					shortestSQL,
+					longestSQL,
+				})
+				return
+			}
+
+			start := time.Now()
+
+			switch cc.String("db-type") {
+			case "postgres":
+				pgConn.Exec(cc.Context, statement)
+			case "mysql":
+				mySqlConn.ExecContext(cc.Context, statement)
+			}
+
+			count++
+			if count%100 == 0 {
+				fmt.Printf("%s made %d queries. min time %s max time %s\n", threadID, count, minDuration, maxDuration)
+			}
+			duration := time.Since(start)
+			if duration < minDuration {
+				minDuration = duration
+				shortestSQL = statement
+			}
+			if duration > maxDuration {
+				maxDuration = duration
+				longestSQL = statement
+			}
+			totalDuration += duration
+
+		case <-time.After(1 * time.Second):
+			log.Print("no sql arrived into go function for 1 second")
 		}
-
-		start := time.Now()
-
-		switch cc.String("db-type") {
-		case "postgres":
-
-			pgConn.Exec(cc.Context, statement)
-		case "mysql":
-			mySqlConn.ExecContext(cc.Context, statement)
-		}
-
-		count++
-		duration := time.Since(start)
-		if duration < min {
-			min = duration
-		}
-		if duration > max {
-			max = duration
-		}
-		totalDuration += duration
-
-	case <-time.After(1 * time.Second):
-		log.Print("no sql arrived into go function for 1 second")
 	}
 
 }
