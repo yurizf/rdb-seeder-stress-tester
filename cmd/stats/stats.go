@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-type stats struct {
+type Stats struct {
 	shortest    time.Duration
 	longest     time.Duration
 	total       time.Duration
@@ -27,19 +27,19 @@ type StatsMAP struct {
 func (m *StatsMAP) Store(threadID string, d time.Duration, sql string) {
 	s, ok := m.m.Load(threadID)
 	if !ok {
-		s = stats{
+		s = Stats{
 			999 * time.Hour,
 			0 * time.Second,
 			0 * time.Second,
 			0,
 			"",
 			"",
-			make([]int, 30),
-			make([]string, 30),
+			make([]int, 1000),
+			make([]string, 1000),
 		}
 	}
 
-	stats := s.(stats)
+	stats := s.(Stats)
 	stats.count++
 
 	if d < stats.shortest {
@@ -61,19 +61,24 @@ func slot(t time.Duration) int {
 	return int(t / (100 * time.Millisecond))
 }
 
-// print stats for all threads
+// print Stats for all threads
 func (m *StatsMAP) Print() {
+	fmt.Println("**********************************************************************")
+	fmt.Println("*   						PRINTING STATS            				  *")
+	fmt.Println("**********************************************************************")
 	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
 	histo := make([]int, 20)
 
 	m.m.Range(func(k, v any) bool {
 		threadID := k.(string)
-		stats := v.(stats)
-		fmt.Println(threadID, stats.count, stats.shortest, stats.shortestSQL, stats.longest, stats.longestSQL)
+		stats := v.(Stats)
+		fmt.Println("thread ID", threadID)
+		fmt.Println("count", stats.count)
+		fmt.Println("shortest", stats.shortest, stats.shortestSQL)
+		fmt.Println("longest", stats.longest, stats.longestSQL)
 		for i := 0; i < 20; i++ {
 			histo[i] += stats.histogram[i]
 		}
-
 		return true
 	})
 
@@ -92,6 +97,17 @@ func (m *StatsMAP) Print() {
 	fmt.Fprintln(w, s)
 	w.Flush()
 	fmt.Println("**********************************************************************")
+}
+
+func (m *StatsMAP) Dump() map[string]Stats {
+	retVal := make(map[string]Stats)
+	m.m.Range(func(k, v any) bool {
+		threadID := k.(string)
+		stats := v.(Stats)
+		retVal[threadID] = stats
+		return true
+	})
+	return retVal
 }
 
 func New() StatsMAP {

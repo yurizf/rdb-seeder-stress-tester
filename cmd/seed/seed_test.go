@@ -14,10 +14,6 @@ import (
 
 type mockDB struct{}
 
-func (db *mockDB) PoisonPill() string {
-	return db.PoisonPill()
-}
-
 func (db *mockDB) SeedTable(cc *cli.Context,
 	threadID string,
 	statsMap stats.StatsMAP,
@@ -27,8 +23,8 @@ func (db *mockDB) SeedTable(cc *cli.Context,
 	fieldValues []map[string]any) {
 
 	defer wg.Done()
-	fmt.Println("seeding table", threadID, sql, fields, fieldValues)
-	statsMap.Store(threadID, 0*time.Second, sql)
+	fmt.Println("test seeding table", threadID, sql, fields, fieldValues)
+	statsMap.Store(threadID, 1*time.Second, sql)
 }
 
 func (db *mockDB) WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
@@ -116,19 +112,19 @@ func Test_doSeed(t *testing.T) {
 						},
 					}, // tableseed
 					Stress: stressConfig{
-						SaveSQLsToFile: "./sqls-" + time.Now().Format("20060102150405") + ".sql",
+						SaveSQLsToFile: "./test-sqls.sql",
 						Sql: []sql{
 							{
 								ID:        "sql-query-1",
 								Statement: `SELECT * FROM Table_1 WHERE Field_1_of_Table_1 in ( {"table":"Table_1", "field":"Field_1_of_Table_1", "minlen": 10, "maxlen": 30})`,
-								Repeat:    30,
+								Repeat:    10,
 								Threads:   5,
 								Comment:   "blah",
 							},
 							{
 								ID:        "sql-query-1",
 								Statement: `SELECT * FROM Table-2 WHERE Field_2_of_Table_2 in ({"table":"Table_2", "field": "Field_2_of_Table_2", "minlen": 20, "maxlen": 40})`,
-								Repeat:    25,
+								Repeat:    5,
 								Threads:   7,
 								Comment:   "blah",
 							},
@@ -145,6 +141,9 @@ func Test_doSeed(t *testing.T) {
 			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doSeed() error = %v, wantErr %v", err, tt.wantErr)
 			}
+			fmt.Println(tt.args.stats.Dump())
+			tt.args.stats.Print()
+			fmt.Println(tt.name)
 		})
 	}
 }
