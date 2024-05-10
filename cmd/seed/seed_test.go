@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/syncmap"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"os"
 	"strings"
 	"sync"
@@ -14,9 +14,13 @@ import (
 
 type mockDB struct{}
 
-func (db *mockDB) seedTable(cc *cli.Context,
+func (db *mockDB) PoisonPill() string {
+	return db.PoisonPill()
+}
+
+func (db *mockDB) SeedTable(cc *cli.Context,
 	threadID string,
-	statsMap *syncmap.Map,
+	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
 	fields []string,
 	sql string,
@@ -24,17 +28,10 @@ func (db *mockDB) seedTable(cc *cli.Context,
 
 	defer wg.Done()
 	fmt.Println("seeding table", threadID, sql, fields, fieldValues)
-	statsMap.Store(threadID, stats{0,
-		0,
-		0,
-		0,
-		0,
-		"",
-		"",
-	})
+	statsMap.Store(threadID, 0*time.Second, sql)
 }
 
-func (db *mockDB) writeSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
+func (db *mockDB) WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
 
 	for i, js := range jsonStrings {
 		var def whereListDef

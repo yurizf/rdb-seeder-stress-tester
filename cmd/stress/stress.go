@@ -1,10 +1,11 @@
-package seed
+package stress
 
 import (
 	"bufio"
 	"fmt"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/syncmap"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"log"
 	"os"
 	"strings"
@@ -12,20 +13,19 @@ import (
 )
 
 const THREADS string = "threads = "
-const POISON_PILL = "POISON_PILL"
 
 type run interface {
-	runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.Map, wg *sync.WaitGroup, sql chan string)
+	RunSQLs(cc *cli.Context, threadID string, statsMap stats.StatsMAP, wg *sync.WaitGroup, sql chan string)
 }
 
 // to allow DB mocking
-func stress(cc *cli.Context) error {
-	statsMaps := make([]syncmap.Map, 100)
-	doStress(cc, newDB(), statsMaps)
+func Stress(cc *cli.Context) error {
+
+	doStress(cc, db.New(), stats.New())
 	return nil
 }
 
-func doStress(cc *cli.Context, db run, statsMaps []syncmap.Map) error {
+func doStress(cc *cli.Context, r run, statsMaps stats.StatsMAP) error {
 	path := cc.Path("input-file")
 	if len(path) == 0 {
 		return fmt.Errorf("no input file path given")
@@ -57,7 +57,7 @@ func doStress(cc *cli.Context, db run, statsMaps []syncmap.Map) error {
 			fmt.Sscanf(s, THREADS+"%d", &threadsCnt)
 			if poisonPillsCnt > 0 {
 				for i := 0; i < poisonPillsCnt; i++ {
-					sqls <- POISON_PILL
+					sqls <- db.POISON_PILL
 				}
 				poisonPillsCnt = 0
 				// wait till all threadsCnt swallow poison pills, one pill per thread
@@ -70,9 +70,9 @@ func doStress(cc *cli.Context, db run, statsMaps []syncmap.Map) error {
 		if threadsCnt > 0 {
 			for i := 0; i < threadsCnt; i++ {
 				wg.Add(1)
-				go db.runSQLs(cc,
+				go r.RunSQLs(cc,
 					fmt.Sprintf("batch-%d-thread-%d", batch, i),
-					&statsMaps[batch],
+					statsMaps,
 					&wg,
 					sqls)
 				poisonPillsCnt++
@@ -86,9 +86,11 @@ func doStress(cc *cli.Context, db run, statsMaps []syncmap.Map) error {
 
 	// input file has been completely read
 	for i := 0; i < poisonPillsCnt; i++ {
-		sqls <- POISON_PILL
+		sqls <- db.POISON_PILL
 	}
 	wg.Wait()
+
+	statsMaps.Print()
 
 	return nil
 }

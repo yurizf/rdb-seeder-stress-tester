@@ -1,14 +1,16 @@
-package seed
+package cmd
 
 import (
 	"github.com/urfave/cli/v2"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/seed"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stress"
 )
 
 var Seed = &cli.Command{
 	Name:        "seed",
 	Description: "Collect aws cost metrics.",
 	Usage:       "seeder-tester seed",
-	Action:      seed, //function
+	Action:      seed.Seed, //function
 	Flags: []cli.Flag{
 		&cli.PathFlag{
 			Name:    "config",
@@ -35,7 +37,7 @@ var Stress = &cli.Command{
 	Name:        "stress",
 	Description: "Collect aws cost metrics.",
 	Usage:       "seeder-tester test",
-	Action:      stress, //function
+	Action:      stress.Stress, //function
 	Flags: []cli.Flag{
 		&cli.PathFlag{
 			Name:    "input-file",

@@ -1,4 +1,4 @@
-package seed
+package db
 
 import (
 	sqlite "database/sql"
@@ -8,31 +8,20 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/syncmap"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
-type database struct{}
+const POISON_PILL = "POISON_PILL"
 
-type stats struct {
-	min         time.Duration
-	max         time.Duration
-	total       time.Duration
-	count       int
-	avg         time.Duration
-	shortestSQL string
-	longestSQL  string
-}
+type Database struct{}
 
-var re = regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
-
-func (db *database) seedTable(cc *cli.Context,
+func (db *Database) SeedTable(cc *cli.Context,
 	threadID string,
-	statsMap *syncmap.Map,
+	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
 	fields []string,
 	sqlStem string,
@@ -69,11 +58,7 @@ func (db *database) seedTable(cc *cli.Context,
 		sqlStatement = sqlStatement[:len(sqlStatement)-1] + ")"
 	}
 
-	maxDuration := 0 * time.Second
-	minDuration := 999 * time.Hour
-	// var avg time.Duration
 	count := 0
-	totalDuration := 0 * time.Second
 
 	for _, m := range fieldValues {
 		vals := make([]any, len(m))
@@ -98,31 +83,19 @@ func (db *database) seedTable(cc *cli.Context,
 
 		count++
 		if count%100 == 0 {
-			fmt.Printf("%s made %d inserts. min time %s max time %s\n", threadID, count, minDuration, maxDuration)
+			fmt.Printf("%s made %d inserts\n", threadID, count)
 		}
 
 		duration := time.Since(start)
-		if duration < minDuration {
-			minDuration = duration
-		}
-		if duration > maxDuration {
-			maxDuration = duration
-		}
-		totalDuration += duration
+		statsMap.Store(threadID, duration, sqlStatement)
 	}
-
-	statsMap.Store(threadID, stats{minDuration,
-		maxDuration,
-		totalDuration,
-		count,
-		//https://go.dev/play/p/6Pbqrz8ZZ3t
-		totalDuration / time.Duration(count),
-		"",
-		"",
-	})
 }
 
-func (db *database) writeSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
+func (db *Database) WriteSQLSelect(f *os.File,
+	sqlStatement string,
+	jsonStrings []string,
+	tokens []string) error {
+
 	outSQL := sqlStatement
 	for j, js := range jsonStrings {
 		outSQL = strings.ReplaceAll(outSQL, js, tokens[j])
@@ -133,7 +106,11 @@ func (db *database) writeSQLSelect(f *os.File, sqlStatement string, jsonStrings 
 }
 
 // reading SQL from the channel until it reads the poison pill
-func (db *database) runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.Map, wg *sync.WaitGroup, sql chan string) {
+func (db *Database) RunSQLs(cc *cli.Context,
+	threadID string,
+	statsMap stats.StatsMAP,
+	wg *sync.WaitGroup,
+	sql chan string) {
 
 	var pgConn *pgx.Conn
 	var mySqlConn *sqlx.DB
@@ -151,27 +128,14 @@ func (db *database) runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.
 		defer func() { liteDBConn.Close(); wg.Done() }()
 	}
 
-	maxDuration := 0 * time.Second
-	minDuration := 999 * time.Hour
 	count := 0
-	totalDuration := 0 * time.Second
-	shortestSQL := ""
-	longestSQL := ""
+	f, _ := os.Create("./" + threadID + ".txt")
+	defer f.Close()
 
 	for {
 		select {
 		case statement := <-sql:
 			if statement == POISON_PILL {
-				statsMap.Store(threadID, stats{
-					minDuration,
-					maxDuration,
-					totalDuration,
-					count,
-					//https://go.dev/play/p/6Pbqrz8ZZ3t
-					totalDuration / time.Duration(count),
-					shortestSQL,
-					longestSQL,
-				})
 				return
 			}
 
@@ -186,18 +150,11 @@ func (db *database) runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.
 
 			count++
 			if count%100 == 0 {
-				fmt.Printf("%s made %d queries. min time %s max time %s\n", threadID, count, minDuration, maxDuration)
+				fmt.Printf("%s made %d queries\n", threadID, count)
 			}
 			duration := time.Since(start)
-			if duration < minDuration {
-				minDuration = duration
-				shortestSQL = statement
-			}
-			if duration > maxDuration {
-				maxDuration = duration
-				longestSQL = statement
-			}
-			totalDuration += duration
+			statsMap.Store(threadID, duration, statement)
+			f.WriteString(fmt.Sprintf("%s %s\n", duration, statement))
 
 		case <-time.After(1 * time.Second):
 			log.Print("no sql arrived into go function for 1 second")
@@ -206,6 +163,6 @@ func (db *database) runSQLs(cc *cli.Context, threadID string, statsMap *syncmap.
 
 }
 
-func newDB() *database {
-	return &database{}
+func New() *Database {
+	return &Database{}
 }

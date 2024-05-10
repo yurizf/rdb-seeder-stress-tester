@@ -1,10 +1,10 @@
-package seed
+package stress
 
 import (
 	"flag"
-	"fmt"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/syncmap"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"log"
 	"path/filepath"
 	"runtime"
@@ -15,36 +15,30 @@ import (
 
 type mockSelect struct{}
 
-func (s *mockSelect) runSQLs(cc *cli.Context,
+func (s *mockSelect) PoisonPill() string {
+	return db.POISON_PILL
+}
+
+func (s *mockSelect) RunSQLs(cc *cli.Context,
 	threadID string,
-	statsMap *syncmap.Map,
+	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
 	sql chan string) {
 
 	defer wg.Done()
 	count := 0
-	shortSQL := ""
-	longSQL := ""
 
 	for {
 		select {
 		case statement := <-sql:
-			if statement == POISON_PILL {
+			if statement == db.POISON_PILL {
 				log.Print(threadID, "   poison pill read from the channel")
-				statsMap.Store(threadID, stats{0,
-					0,
-					0,
-					count,
-					0,
-					shortSQL,
-					longSQL,
-				})
+				statsMap.Store(threadID, 0*time.Second, statement)
 				count = 0
 				return
 			} else {
 				log.Print(threadID, "   ", statement)
-				shortSQL = statement
-				longSQL = statement
+				statsMap.Store(threadID, 0*time.Second, statement)
 				count++
 			}
 		case <-time.After(10 * time.Second):
@@ -73,7 +67,7 @@ func Test_doStress(t *testing.T) {
 	type args struct {
 		cc    *cli.Context
 		db    run
-		stats []syncmap.Map
+		stats stats.StatsMAP
 	}
 	tests := []struct {
 		name    string
@@ -85,7 +79,7 @@ func Test_doStress(t *testing.T) {
 			args: args{
 				cc:    mockCLIConetext(),
 				db:    &mockSelect{},
-				stats: make([]syncmap.Map, 10),
+				stats: stats.New(),
 				// TODO: Add test cases.
 			},
 			wantErr: false,
@@ -96,13 +90,7 @@ func Test_doStress(t *testing.T) {
 			if err := doStress(tt.args.cc, tt.args.db, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doStress() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			for i := 0; i < 2; i++ {
-				tt.args.stats[i].Range(func(k, v any) bool {
-					stats := v.(stats)
-					fmt.Println(k.(string), stats.min, stats.avg, stats.max, stats.count, stats.shortestSQL, stats.longestSQL)
-					return true
-				})
-			}
+			tt.args.stats.Print()
 		})
 	}
 }

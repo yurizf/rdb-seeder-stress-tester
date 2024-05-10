@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	dbPKG "github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stress"
 	"golang.org/x/sync/syncmap"
 	"log"
 	"math/rand"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,19 +60,21 @@ type whereListDef struct {
 }
 
 type db interface {
-	seedTable(cc *cli.Context,
+	SeedTable(cc *cli.Context,
 		threadID string,
-		statsMap *syncmap.Map,
+		statsMap stats.StatsMAP,
 		wg *sync.WaitGroup,
 		fields []string,
 		sqlStem string,
 		fieldValues []map[string]any)
 
-	writeSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error
+	WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error
 }
 
+var re = regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
+
 // to allow DB mocking
-func seed(cc *cli.Context) error {
+func Seed(cc *cli.Context) error {
 	path := cc.Path("config")
 	if len(path) == 0 {
 		return fmt.Errorf("no config path given")
@@ -85,7 +91,7 @@ func seed(cc *cli.Context) error {
 		return err
 	}
 
-	dbSeeder := newDB()
+	dbSeeder := dbPKG.New()
 	err = doSeed(cc, dbSeeder, config)
 	if err != nil {
 		log.Fatalf("Failed to seed %s\n", err)
@@ -121,7 +127,7 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		}
 	}
 
-	var statsMap syncmap.Map
+	statsMap := stats.New()
 	// by tables
 	for _, seed := range config.Seed {
 		sqlStem := "INSERT INTO " + seed.Table + " ("
@@ -140,9 +146,9 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		// spawn seed.Threads, each to insert seed.Records records from typedSlice.
 		for i := 0; i < seed.Threads; i++ {
 			wg.Add(1)
-			go dbSeeder.seedTable(cc,
+			go dbSeeder.SeedTable(cc,
 				fmt.Sprintf("thread-%d", i),
-				&statsMap,
+				statsMap,
 				&wg,
 				fields,
 				sqlStem,
@@ -153,13 +159,7 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		wg.Wait()
 	}
 
-	// print stats for each thread
-	statsMap.Range(func(k, v any) bool {
-		threadID := k.(string)
-		stats := v.(stats)
-		fmt.Println(threadID, stats.min, stats.avg, stats.max, stats.count)
-		return true
-	})
+	statsMap.Print()
 
 	return saveSQLSelect(&config, dbSeeder, &seedMap, tableFieldTypes)
 }
@@ -223,7 +223,7 @@ func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableField
 	f, _ := os.Create(config.Stress.SaveSQLsToFile)
 
 	for _, sql := range config.Stress.Sql {
-		if _, err := f.WriteString(THREADS + strconv.Itoa(sql.Threads) + "\n"); err != nil {
+		if _, err := f.WriteString(stress.THREADS + strconv.Itoa(sql.Threads) + "\n"); err != nil {
 			return err
 		}
 
@@ -242,7 +242,7 @@ func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableField
 			for j, def := range defs {
 				tokens[j] = generateOneINList(def, seedMap, tableFieldTypes)
 			}
-			if err := dbSeeder.writeSQLSelect(f, sql.Statement, jsonStrings, tokens); err != nil {
+			if err := dbSeeder.WriteSQLSelect(f, sql.Statement, jsonStrings, tokens); err != nil {
 				return err
 			}
 
