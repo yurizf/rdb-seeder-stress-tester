@@ -53,6 +53,7 @@ func Test_doSeed(t *testing.T) {
 		cc       *cli.Context
 		dbSeeder db
 		config   config
+		stats    stats.StatsMAP
 	}
 	tests := []struct {
 		name    string
@@ -64,6 +65,7 @@ func Test_doSeed(t *testing.T) {
 			args: args{
 				cc:       &cli.Context{},
 				dbSeeder: &mockDB{},
+				stats:    stats.New(),
 				config: config{
 					Seed: []tableSeed{
 						{
@@ -140,7 +142,7 @@ func Test_doSeed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config); (err != nil) != tt.wantErr {
+			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doSeed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

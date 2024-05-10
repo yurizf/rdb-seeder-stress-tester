@@ -90,7 +90,6 @@ func Test_doStress(t *testing.T) {
 			if err := doStress(tt.args.cc, tt.args.db, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doStress() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			tt.args.stats.Print()
 		})
 	}
 }

@@ -40,6 +40,7 @@ func (m *StatsMAP) Store(threadID string, d time.Duration, sql string) {
 	}
 
 	stats := s.(stats)
+	stats.count++
 
 	if d < stats.shortest {
 		stats.shortest = d
@@ -62,24 +63,35 @@ func slot(t time.Duration) int {
 
 // print stats for all threads
 func (m *StatsMAP) Print() {
+	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+	histo := make([]int, 20)
+
 	m.m.Range(func(k, v any) bool {
 		threadID := k.(string)
 		stats := v.(stats)
-		fmt.Println(threadID, stats.shortest, stats.longest, stats.count)
-		w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
-		s := "under\t"
+		fmt.Println(threadID, stats.count, stats.shortest, stats.shortestSQL, stats.longest, stats.longestSQL)
 		for i := 0; i < 20; i++ {
-			s += fmt.Sprintf("%d ms\t", 100*(i+1))
+			histo[i] += stats.histogram[i]
 		}
-		fmt.Fprintln(w, s)
-		s = "     \t"
-		for i := 0; i < 20; i++ {
-			s += fmt.Sprintf("%d\t", stats.histogram[i])
-		}
-		fmt.Fprintln(w, s)
-		w.Flush()
+
 		return true
 	})
+
+	fmt.Println("**********************************************************************")
+	fmt.Println("*   cummulative sql execution histohram by time elapsed              *")
+	fmt.Println("**********************************************************************")
+	s := "under\t"
+	for i := 0; i < 20; i++ {
+		s += fmt.Sprintf("%d ms\t", 100*(i+1))
+	}
+	fmt.Fprintln(w, s)
+	s = "     \t"
+	for i := 0; i < 20; i++ {
+		s += fmt.Sprintf("%d\t", histo[i])
+	}
+	fmt.Fprintln(w, s)
+	w.Flush()
+	fmt.Println("**********************************************************************")
 }
 
 func New() StatsMAP {

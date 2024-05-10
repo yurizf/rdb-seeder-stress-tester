@@ -92,7 +92,8 @@ func Seed(cc *cli.Context) error {
 	}
 
 	dbSeeder := dbPKG.New()
-	err = doSeed(cc, dbSeeder, config)
+	statsMap := stats.New()
+	err = doSeed(cc, dbSeeder, config, statsMap)
 	if err != nil {
 		log.Fatalf("Failed to seed %s\n", err)
 		return err
@@ -101,7 +102,7 @@ func Seed(cc *cli.Context) error {
 	return nil
 }
 
-func doSeed(cc *cli.Context, dbSeeder db, config config) error {
+func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP) error {
 	// initialize rand
 	// Deprecated: As of Go 1.20 there is no reason to call Seed with a random value.
 	// rand.Seed(time.Now().UTC().UnixNano())
@@ -122,12 +123,6 @@ func doSeed(cc *cli.Context, dbSeeder db, config config) error {
 		}
 	}
 
-	for _, seed := range config.Seed {
-		for i := 0; i < seed.Records; i++ {
-		}
-	}
-
-	statsMap := stats.New()
 	// by tables
 	for _, seed := range config.Seed {
 		sqlStem := "INSERT INTO " + seed.Table + " ("

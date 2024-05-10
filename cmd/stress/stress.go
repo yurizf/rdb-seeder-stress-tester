@@ -25,7 +25,7 @@ func Stress(cc *cli.Context) error {
 	return nil
 }
 
-func doStress(cc *cli.Context, r run, statsMaps stats.StatsMAP) error {
+func doStress(cc *cli.Context, r run, statsMap stats.StatsMAP) error {
 	path := cc.Path("input-file")
 	if len(path) == 0 {
 		return fmt.Errorf("no input file path given")
@@ -72,7 +72,7 @@ func doStress(cc *cli.Context, r run, statsMaps stats.StatsMAP) error {
 				wg.Add(1)
 				go r.RunSQLs(cc,
 					fmt.Sprintf("batch-%d-thread-%d", batch, i),
-					statsMaps,
+					statsMap,
 					&wg,
 					sqls)
 				poisonPillsCnt++
@@ -90,7 +90,7 @@ func doStress(cc *cli.Context, r run, statsMaps stats.StatsMAP) error {
 	}
 	wg.Wait()
 
-	statsMaps.Print()
+	statsMap.Print()
 
 	return nil
 }
