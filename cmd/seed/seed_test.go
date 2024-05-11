@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/urfave/cli/v2"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -23,7 +24,7 @@ func (db *mockDB) SeedTable(cc *cli.Context,
 	fieldValues []map[string]any) {
 
 	defer wg.Done()
-	fmt.Println("test seeding table", threadID, sql, fields, fieldValues)
+	slog.Debug("test seeding table", "threadID", threadID, "sql", sql, "fields", fields, "fieldValues", fieldValues)
 	statsMap.Store(threadID, 1*time.Second, sql)
 }
 
@@ -136,14 +137,15 @@ func Test_doSeed(t *testing.T) {
 		},
 		// TODO: Add test cases.
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doSeed() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			fmt.Println(tt.args.stats.Dump())
+			slog.Debug("Stats dump", "stats", tt.args.stats.Dump())
 			tt.args.stats.Print()
-			fmt.Println(tt.name)
+			slog.Info(tt.name)
 		})
 	}
 }

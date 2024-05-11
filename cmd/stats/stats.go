@@ -3,6 +3,7 @@ package stats
 import (
 	"fmt"
 	"golang.org/x/sync/syncmap"
+	"log/slog"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -63,28 +64,28 @@ func slot(t time.Duration) int {
 
 // print Stats for all threads
 func (m *StatsMAP) Print() {
-	fmt.Println("**********************************************************************")
-	fmt.Println("*   						PRINTING STATS            				  *")
-	fmt.Println("**********************************************************************")
+	slog.Info("**********************************************************************")
+	slog.Info("*   						PRINTING STATS            				  *")
+	slog.Info("**********************************************************************")
 	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
 	histo := make([]int, 20)
 
 	m.m.Range(func(k, v any) bool {
 		threadID := k.(string)
 		stats := v.(Stats)
-		fmt.Println("thread ID", threadID)
-		fmt.Println("count", stats.count)
-		fmt.Println("shortest", stats.shortest, stats.shortestSQL)
-		fmt.Println("longest", stats.longest, stats.longestSQL)
+		slog.Debug("thread ID", threadID)
+		slog.Debug("count", stats.count)
+		slog.Debug("shortest", stats.shortest, stats.shortestSQL)
+		slog.Debug("longest", stats.longest, stats.longestSQL)
 		for i := 0; i < 20; i++ {
 			histo[i] += stats.histogram[i]
 		}
 		return true
 	})
 
-	fmt.Println("**********************************************************************")
-	fmt.Println("*   cummulative sql execution histohram by time elapsed              *")
-	fmt.Println("**********************************************************************")
+	slog.Info("**********************************************************************")
+	slog.Info("*   cummulative sql execution histohram by time elapsed              *")
+	slog.Info("**********************************************************************")
 	s := "under\t"
 	for i := 0; i < 20; i++ {
 		s += fmt.Sprintf("%d ms\t", 100*(i+1))
@@ -96,7 +97,7 @@ func (m *StatsMAP) Print() {
 	}
 	fmt.Fprintln(w, s)
 	w.Flush()
-	fmt.Println("**********************************************************************")
+	slog.Info("**********************************************************************")
 }
 
 func (m *StatsMAP) Dump() map[string]Stats {

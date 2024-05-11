@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -83,7 +84,7 @@ func (db *Database) SeedTable(cc *cli.Context,
 
 		count++
 		if count%100 == 0 {
-			fmt.Printf("%s made %d inserts\n", threadID, count)
+			slog.Info(fmt.Sprintf("%s made %d inserts\n", threadID, count))
 		}
 
 		duration := time.Since(start)
@@ -150,7 +151,7 @@ func (db *Database) RunSQLs(cc *cli.Context,
 
 			count++
 			if count%100 == 0 {
-				fmt.Printf("%s made %d queries\n", threadID, count)
+				slog.Info(fmt.Sprintf("%s made %d queries\n", threadID, count))
 			}
 			duration := time.Since(start)
 			statsMap.Store(threadID, duration, statement)

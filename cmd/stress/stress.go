@@ -7,6 +7,7 @@ import (
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -20,6 +21,25 @@ type run interface {
 
 // to allow DB mocking
 func Stress(cc *cli.Context) error {
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+	logLevel := cc.String("log-level")
+	switch logLevel {
+	case "debug":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}
+	case "error":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelError,
+		}
+	case "warn":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelWarn,
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 
 	doStress(cc, db.New(), stats.New())
 	return nil

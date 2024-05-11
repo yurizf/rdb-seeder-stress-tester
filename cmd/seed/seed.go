@@ -9,6 +9,7 @@ import (
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stress"
 	"golang.org/x/sync/syncmap"
 	"log"
+	"log/slog"
 	"math/rand"
 	"os"
 	"regexp"
@@ -75,6 +76,26 @@ var re = regexp.MustCompile(`{[a-zA-Z_\-0-9":, ]+}`)
 
 // to allow DB mocking
 func Seed(cc *cli.Context) error {
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+	logLevel := cc.String("log-level")
+	switch logLevel {
+	case "debug":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}
+	case "error":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelError,
+		}
+	case "warn":
+		opts = &slog.HandlerOptions{
+			Level: slog.LevelWarn,
+		}
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
+
 	path := cc.Path("config")
 	if len(path) == 0 {
 		return fmt.Errorf("no config path given")
