@@ -22,6 +22,7 @@ type fieldSeed struct {
 	ID          string `json:"ID" binding:"required"`
 	Field       string `json:"field" binding:"required"`
 	FieldType   string `json:"field_type" binding:"required"`
+	Unique      bool   `json:"unique" binding:"required"`
 	Encoding    string `json:"encoding"`
 	Min         int    `json:"min" binding:"required"`
 	Max         int    `json:"max" binding:"required"`
@@ -63,11 +64,11 @@ type whereListDef struct {
 type db interface {
 	SeedTable(cc *cli.Context,
 		threadID string,
-		statsMap stats.StatsMAP,
-		wg *sync.WaitGroup,
+		table string,
 		fields []string,
-		sqlStem string,
-		fieldValues []map[string]any)
+		fieldValues []map[string]any,
+		statsMap stats.StatsMAP,
+		wg *sync.WaitGroup)
 
 	WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error
 }
@@ -146,14 +147,10 @@ func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP
 
 	// by tables
 	for _, seed := range config.Seed {
-		sqlStem := "INSERT INTO " + seed.Table + " ("
 		fields := make([]string, len(seed.Fields))
-
 		for i, f := range seed.Fields {
-			sqlStem += f.Field + ","
 			fields[i] = f.Field
 		}
-		sqlStem = sqlStem[:len(sqlStem)-1] + ") VALUES ("
 
 		slice, _ := seedMap.Load(seed.Table)
 		typedSlice := slice.([]map[string]any)
@@ -164,12 +161,12 @@ func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP
 			wg.Add(1)
 			go dbSeeder.SeedTable(cc,
 				fmt.Sprintf("thread-%d", i),
-				statsMap,
-				&wg,
+				seed.Table,
 				fields,
-				sqlStem,
 				// make each thread insert "different" values
-				typedSlice[i+seed.Records/seed.Threads:])
+				typedSlice[i+seed.Records/seed.Threads:],
+				statsMap,
+				&wg)
 		}
 
 		wg.Wait()
@@ -205,6 +202,7 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 		records = make([]map[string]any, 0, s.Records)
 	}
 
+	unique := make(map[string]bool)
 	// for the number of records specified for this table
 	for i := 0; i < s.Records; i++ {
 		m := make(map[string]any)
@@ -218,16 +216,35 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 				switch f.FieldType {
 				case "string":
 					m[f.Field] = randString(f.Min, f.Max)
+					if f.Unique {
+						s := m[f.Field].(string)
+						for _, ok = unique[s]; ok; {
+							m[f.Field] = rand.Intn(f.Max-f.Min+1) + f.Min
+							s = m[f.Field].(string)
+						}
+						unique[s] = true
+					}
 				case "int":
+
 					m[f.Field] = rand.Intn(f.Max-f.Min+1) + f.Min
+					if f.Unique {
+						s := strconv.Itoa(m[f.Field].(int))
+						for _, ok = unique[s]; ok; {
+							m[f.Field] = rand.Intn(f.Max-f.Min+1) + f.Min
+							s = strconv.Itoa(m[f.Field].(int))
+						}
+						unique[s] = true
+					}
 				default:
 					log.Fatalf("Invalid %s field type: %s", f.Field, f.FieldType)
+
 				}
 			}
 		}
 
 		records = append(records, m)
 	}
+
 	seedMap.Store(s.Table, records)
 }
 

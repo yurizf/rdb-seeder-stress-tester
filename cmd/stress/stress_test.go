@@ -33,12 +33,12 @@ func (s *mockSelect) RunSQLs(cc *cli.Context,
 		case statement := <-sql:
 			if statement == db.POISON_PILL {
 				log.Print(threadID, "   poison pill read from the channel")
-				statsMap.Store(threadID, 0*time.Second, statement)
+				statsMap.StoreSingleSQL(threadID, 0*time.Second, statement)
 				count = 0
 				return
 			} else {
 				log.Print(threadID, "   ", statement)
-				statsMap.Store(threadID, 0*time.Second, statement)
+				statsMap.StoreSingleSQL(threadID, 0*time.Second, statement)
 				count++
 			}
 		case <-time.After(10 * time.Second):

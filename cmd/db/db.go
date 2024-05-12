@@ -22,16 +22,21 @@ type Database struct{}
 
 func (db *Database) SeedTable(cc *cli.Context,
 	threadID string,
+	table string,
+	fields []string,
+	fieldValues []map[string]any,
 	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
-	fields []string,
-	sqlStem string,
-	fieldValues []map[string]any) {
+) {
 
 	var pgConn *pgx.Conn
 	var mySqlConn *sqlx.DB
 	var liteDBConn *sqlite.DB
-	sqlStatement := sqlStem
+	sqlStatement := "INSERT INTO " + table + " ("
+	for _, f := range fields {
+		sqlStatement += f + ","
+	}
+	sqlStatement = sqlStatement[:len(sqlStatement)-1] + ") VALUES ("
 
 	switch cc.String("db-type") {
 	case "postgres":
@@ -88,7 +93,7 @@ func (db *Database) SeedTable(cc *cli.Context,
 		}
 
 		duration := time.Since(start)
-		statsMap.Store(threadID, duration, sqlStatement)
+		statsMap.StoreSingleSQL(threadID, duration, sqlStatement)
 	}
 }
 
@@ -154,7 +159,7 @@ func (db *Database) RunSQLs(cc *cli.Context,
 				slog.Info(fmt.Sprintf("%s made %d queries\n", threadID, count))
 			}
 			duration := time.Since(start)
-			statsMap.Store(threadID, duration, statement)
+			statsMap.StoreSingleSQL(threadID, duration, statement)
 			f.WriteString(fmt.Sprintf("%s %s\n", duration, statement))
 
 		case <-time.After(1 * time.Second):

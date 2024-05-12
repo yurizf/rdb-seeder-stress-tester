@@ -17,15 +17,17 @@ type mockDB struct{}
 
 func (db *mockDB) SeedTable(cc *cli.Context,
 	threadID string,
-	statsMap stats.StatsMAP,
-	wg *sync.WaitGroup,
+	table string,
 	fields []string,
-	sql string,
-	fieldValues []map[string]any) {
+	fieldValues []map[string]any,
+	statsMap stats.StatsMAP,
+	wg *sync.WaitGroup) {
 
 	defer wg.Done()
-	slog.Debug("test seeding table", "threadID", threadID, "sql", sql, "fields", fields, "fieldValues", fieldValues)
-	statsMap.Store(threadID, 1*time.Second, sql)
+	slog.Debug("test seeding table", "threadID", threadID, "sql", "test-sql with"+strings.Join(fields, ","), "fieldValues", fieldValues)
+	for _, _ = range fieldValues {
+		statsMap.StoreSingleSQL(threadID, 1*time.Second, "test-sql with"+strings.Join(fields, ","))
+	}
 }
 
 func (db *mockDB) WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []string, tokens []string) error {
@@ -68,7 +70,7 @@ func Test_doSeed(t *testing.T) {
 						{
 							Table:   "Table_1",
 							Records: 1000,
-							Threads: 5,
+							Threads: 3,
 							Fields: []fieldSeed{
 								{
 									ID:          "field-1",
@@ -137,13 +139,30 @@ func Test_doSeed(t *testing.T) {
 		},
 		// TODO: Add test cases.
 	}
-
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config, tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doSeed() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			slog.Debug("Stats dump", "stats", tt.args.stats.Dump())
+
+			stats := tt.args.stats.Dump()
+			expectedCnt := 0
+			for _, s := range tt.args.config.Seed {
+				expectedCnt += s.Records * s.Threads
+			}
+
+			actualCnt := 0
+			for _, v := range stats {
+				actualCnt += v.Count
+			}
+			if expectedCnt != actualCnt {
+				t.Errorf("expected count %d does not match actual count %d", expectedCnt, actualCnt)
+			}
+
 			tt.args.stats.Print()
 			slog.Info(tt.name)
 		})

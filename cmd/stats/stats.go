@@ -13,11 +13,11 @@ type Stats struct {
 	shortest    time.Duration
 	longest     time.Duration
 	total       time.Duration
-	count       int
+	Count       int
 	shortestSQL string
 	longestSQL  string
 	// 100milis, 200milis,
-	histogram        []int
+	Histogram        []int
 	histoDescription []string
 }
 
@@ -25,7 +25,7 @@ type StatsMAP struct {
 	m *syncmap.Map
 }
 
-func (m *StatsMAP) Store(threadID string, d time.Duration, sql string) {
+func (m *StatsMAP) StoreSingleSQL(threadID string, d time.Duration, sql string) {
 	s, ok := m.m.Load(threadID)
 	if !ok {
 		s = Stats{
@@ -41,7 +41,7 @@ func (m *StatsMAP) Store(threadID string, d time.Duration, sql string) {
 	}
 
 	stats := s.(Stats)
-	stats.count++
+	stats.Count++
 
 	if d < stats.shortest {
 		stats.shortest = d
@@ -53,7 +53,7 @@ func (m *StatsMAP) Store(threadID string, d time.Duration, sql string) {
 		stats.longestSQL = sql
 	}
 	stats.total += d
-	stats.histogram[slot(d)]++
+	stats.Histogram[slot(d)]++
 
 	m.m.Store(threadID, stats)
 }
@@ -65,7 +65,7 @@ func slot(t time.Duration) int {
 // print Stats for all threads
 func (m *StatsMAP) Print() {
 	slog.Info("**********************************************************************")
-	slog.Info("*   						PRINTING STATS            				  *")
+	slog.Info("*                              PRINTING STATS                        *")
 	slog.Info("**********************************************************************")
 	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
 	histo := make([]int, 20)
@@ -74,11 +74,11 @@ func (m *StatsMAP) Print() {
 		threadID := k.(string)
 		stats := v.(Stats)
 		slog.Debug("thread ID", threadID)
-		slog.Debug("count", stats.count)
+		slog.Debug("Count", stats.Count)
 		slog.Debug("shortest", stats.shortest, stats.shortestSQL)
 		slog.Debug("longest", stats.longest, stats.longestSQL)
 		for i := 0; i < 20; i++ {
-			histo[i] += stats.histogram[i]
+			histo[i] += stats.Histogram[i]
 		}
 		return true
 	})
