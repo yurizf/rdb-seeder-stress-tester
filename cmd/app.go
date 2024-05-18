@@ -7,7 +7,7 @@ import (
 func App() *cli.App {
 	app := cli.NewApp()
 	app.Name = "rdb-seeder-stresser"
-	app.Usage = "Utiliyu seeding and stress testing DB"
+	app.Usage = "Utility seeding and stress testing DB"
 
 	app.Flags = []cli.Flag{
 		&cli.StringFlag{

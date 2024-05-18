@@ -13,10 +13,11 @@ import (
 	"sync"
 )
 
-const THREADS string = "threads = "
+const THREADS string = "THREADS = "
+const ID string = "ID = "
 
 type run interface {
-	RunSQLs(cc *cli.Context, threadID string, statsMap stats.StatsMAP, wg *sync.WaitGroup, sql chan string)
+	RunSQLs(cc *cli.Context, threadID string, statsMap stats.StatsMAP, wg *sync.WaitGroup, sql chan db.Task)
 }
 
 // to allow DB mocking
@@ -41,11 +42,17 @@ func Stress(cc *cli.Context) error {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 
-	doStress(cc, db.New(), stats.New())
+	doStress(cc,
+		func(dbType string, dbUrl string) run {
+			return db.New(dbType, dbUrl)
+		},
+		stats.New())
 	return nil
 }
 
-func doStress(cc *cli.Context, r run, statsMap stats.StatsMAP) error {
+func doStress(cc *cli.Context,
+	new func(dbtype string, dburl string) run,
+	statsMap stats.StatsMAP) error {
 	path := cc.Path("input-file")
 	if len(path) == 0 {
 		return fmt.Errorf("no input file path given")
@@ -63,54 +70,62 @@ func doStress(cc *cli.Context, r run, statsMap stats.StatsMAP) error {
 	buf := make([]byte, maxCapacity)
 	scanner.Buffer(buf, maxCapacity)
 
-	sqls := make(chan string, 1)
+	sqls := make(chan db.Task, 1)
 
 	threadsCnt := 0
-	poisonPillsCnt := 0
 	var wg sync.WaitGroup
-	batch := -1
+	count := 0
+	id := ""
 	for scanner.Scan() {
 		// get a line
 		s := scanner.Text()
-		if strings.HasPrefix(s, THREADS) {
-			batch++
+
+		if strings.HasPrefix(s, ID) {
+			fmt.Sscanf(s, ID+"%s", &id)
+			scanner.Scan()
 			fmt.Sscanf(s, THREADS+"%d", &threadsCnt)
-			if poisonPillsCnt > 0 {
-				for i := 0; i < poisonPillsCnt; i++ {
-					sqls <- db.POISON_PILL
+			// batch == 0 means beginning of the file, nothing is running yet
+			if count > 0 {
+				for i := 0; i < threadsCnt; i++ {
+					sqls <- db.POISON_TASK
 				}
-				poisonPillsCnt = 0
 				// wait till all threadsCnt swallow poison pills, one pill per thread
 				wg.Wait()
+			}
+
+			if threadsCnt > 0 {
+				for i := 0; i < threadsCnt; i++ {
+					r := new(cc.String("db-type"), cc.String("db-url"))
+					wg.Add(1)
+					go r.RunSQLs(cc,
+						fmt.Sprintf("thread-%d", i),
+						statsMap,
+						&wg,
+						sqls)
+				}
 			}
 			continue
 		}
 
 		// we get here on a non "threadsCnt = " line
-		if threadsCnt > 0 {
-			for i := 0; i < threadsCnt; i++ {
-				wg.Add(1)
-				go r.RunSQLs(cc,
-					fmt.Sprintf("batch-%d-thread-%d", batch, i),
-					statsMap,
-					&wg,
-					sqls)
-				poisonPillsCnt++
-			}
-			batch++
-			threadsCnt = 0
+		// feed sql to the channel
+		sqls <- db.Task{
+			id,
+			s,
 		}
-
-		sqls <- s
+		count++
+		if count%100 == 0 {
+			slog.Info("sqls fed", "ID", id, "count", count)
+		}
 	}
 
 	// input file has been completely read
-	for i := 0; i < poisonPillsCnt; i++ {
-		sqls <- db.POISON_PILL
+	for i := 0; i < threadsCnt; i++ {
+		sqls <- db.POISON_TASK
 	}
 	wg.Wait()
 
-	statsMap.Print()
+	statsMap.Print(cc)
 
 	return nil
 }

@@ -2,11 +2,14 @@ package seed
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/urfave/cli/v2"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -26,7 +29,7 @@ func (db *mockDB) SeedTable(cc *cli.Context,
 	defer wg.Done()
 	slog.Debug("test seeding table", "threadID", threadID, "sql", "test-sql with"+strings.Join(fields, ","), "fieldValues", fieldValues)
 	for _, _ = range fieldValues {
-		statsMap.StoreSingleSQL(threadID, 1*time.Second, "test-sql with"+strings.Join(fields, ","))
+		statsMap.StoreSingleSQL("insert", threadID, 1*time.Second, "test-sql with"+strings.Join(fields, ","))
 	}
 }
 
@@ -44,13 +47,28 @@ func (db *mockDB) WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []
 	return nil
 }
 
+func mockCLIConetext() *cli.Context {
+	fl := flag.Flag{
+		Name: "out-dir",
+	}
+	fs := flag.NewFlagSet("", flag.ExitOnError)
+	app := cli.NewApp()
+	// define a flag with default value
+	fs.String(fl.Name, "", "")
+	_, fname, _, _ := runtime.Caller(0)
+	top := filepath.Dir(filepath.Dir(filepath.Dir(fname)))
+	// set a new value
+	fs.Set(fl.Name, top+"/test")
+	return cli.NewContext(app, fs, nil)
+}
+
 func Test_doSeed(t *testing.T) {
 	// mockApp := cli.NewApp()
 	// cli.StringFlag{ Name:"a", Value: "v"}
 
 	type args struct {
 		cc       *cli.Context
-		dbSeeder db
+		dbSeeder func(dbType string, dbUrl string) dbseeder
 		config   config
 		stats    stats.StatsMAP
 	}
@@ -62,9 +80,12 @@ func Test_doSeed(t *testing.T) {
 		{
 			name: "test-seed",
 			args: args{
-				cc:       &cli.Context{},
-				dbSeeder: &mockDB{},
-				stats:    stats.New(),
+				// cc:       &cli.Context{},
+				cc: mockCLIConetext(),
+				dbSeeder: func(dbType string, dbUrl string) dbseeder {
+					return &mockDB{}
+				},
+				stats: stats.New(),
 				config: config{
 					Seed: []tableSeed{
 						{
@@ -152,7 +173,7 @@ func Test_doSeed(t *testing.T) {
 			stats := tt.args.stats.Dump()
 			expectedCnt := 0
 			for _, s := range tt.args.config.Seed {
-				expectedCnt += s.Records * s.Threads
+				expectedCnt += s.Records
 			}
 
 			actualCnt := 0
@@ -163,7 +184,7 @@ func Test_doSeed(t *testing.T) {
 				t.Errorf("expected count %d does not match actual count %d", expectedCnt, actualCnt)
 			}
 
-			tt.args.stats.Print()
+			tt.args.stats.Print(tt.args.cc)
 			slog.Info(tt.name)
 		})
 	}

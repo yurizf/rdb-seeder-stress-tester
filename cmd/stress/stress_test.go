@@ -23,22 +23,21 @@ func (s *mockSelect) RunSQLs(cc *cli.Context,
 	threadID string,
 	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
-	sql chan string) {
+	sql chan db.Task) {
 
 	defer wg.Done()
 	count := 0
 
 	for {
 		select {
-		case statement := <-sql:
-			if statement == db.POISON_PILL {
+		case task := <-sql:
+			if task.SQL == db.POISON_PILL {
 				log.Print(threadID, "   poison pill read from the channel")
-				statsMap.StoreSingleSQL(threadID, 0*time.Second, statement)
 				count = 0
 				return
 			} else {
-				log.Print(threadID, "   ", statement)
-				statsMap.StoreSingleSQL(threadID, 0*time.Second, statement)
+				log.Print(threadID, "   ", task.SQL)
+				statsMap.StoreSingleSQL(task.SQLID, threadID, 10*time.Second, task.SQL)
 				count++
 			}
 		case <-time.After(10 * time.Second):
@@ -87,7 +86,11 @@ func Test_doStress(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := doStress(tt.args.cc, tt.args.db, tt.args.stats); (err != nil) != tt.wantErr {
+			if err := doStress(tt.args.cc,
+				func(dbType string, dbUrl string) run {
+					return tt.args.db
+				},
+				tt.args.stats); (err != nil) != tt.wantErr {
 				t.Errorf("doStress() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

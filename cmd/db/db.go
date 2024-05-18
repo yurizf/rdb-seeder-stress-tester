@@ -1,10 +1,7 @@
 package db
 
 import (
-	sqlite "database/sql"
 	"fmt"
-	"github.com/jackc/pgx/v4"
-	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog/log"
 	"github.com/urfave/cli/v2"
@@ -16,9 +13,31 @@ import (
 	"time"
 )
 
-const POISON_PILL = "POISON_PILL"
+type Database struct {
+	dbUrl  string
+	dbType string
+	dbi    database
+}
 
-type Database struct{}
+type Task struct {
+	SQLID string
+	SQL   string
+}
+
+const POISON_PILL string = "POISON PILL"
+
+var POISON_TASK = Task{
+	"NONE",
+	"POISON_PILL",
+}
+
+type database interface {
+	connect(cc *cli.Context) error
+	close(cc *cli.Context) error
+	buildInsert(table string, fields []string) string
+	exec(cc *cli.Context, sql string, arguments []any) error
+	execLiteral(cc *cli.Context, sql string) error
+}
 
 func (db *Database) SeedTable(cc *cli.Context,
 	threadID string,
@@ -28,41 +47,12 @@ func (db *Database) SeedTable(cc *cli.Context,
 	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
 ) {
-
-	var pgConn *pgx.Conn
-	var mySqlConn *sqlx.DB
-	var liteDBConn *sqlite.DB
-	sqlStatement := "INSERT INTO " + table + " ("
-	for _, f := range fields {
-		sqlStatement += f + ","
+	sqlStatement := db.dbi.buildInsert(table, fields)
+	err := db.dbi.connect(cc)
+	if err != nil {
+		log.Fatal().Err(err).Msg(fmt.Sprintf("failed to connect to db %s", db.dbUrl))
 	}
-	sqlStatement = sqlStatement[:len(sqlStatement)-1] + ") VALUES ("
-
-	switch cc.String("db-type") {
-	case "postgres":
-		// have to have it here b/c of defer call. to avoid type assertions etc
-		pgConn, _ = pgx.Connect(cc.Context, cc.String("db-url"))
-		defer func() { pgConn.Close(cc.Context); wg.Done() }()
-
-		for i := range fields {
-			sqlStatement += "$" + fmt.Sprint(i+1) + ","
-		}
-		sqlStatement = sqlStatement[:len(sqlStatement)-1] + ")"
-
-	case "mysql":
-		mySqlConn, _ = sqlx.Connect("mysql", cc.String("db-url"))
-		defer func() { mySqlConn.Close(); wg.Done() }()
-
-		sqlStatement += strings.Repeat("?,", len(fields))
-		sqlStatement = sqlStatement[:len(sqlStatement)-1] + ")"
-
-	case "sqlite":
-		liteDBConn, _ = sqlite.Open("sqlite3", cc.String("db-url"))
-		defer func() { liteDBConn.Close(); wg.Done() }()
-
-		sqlStatement += strings.Repeat("?,", len(fields))
-		sqlStatement = sqlStatement[:len(sqlStatement)-1] + ")"
-	}
+	defer func() { db.dbi.close(cc); wg.Done() }()
 
 	count := 0
 
@@ -74,26 +64,19 @@ func (db *Database) SeedTable(cc *cli.Context,
 
 		start := time.Now()
 		// log.Print(sqlStatement, vals, "\n")
-		switch cc.String("db-type") {
-		case "postgres":
-			pgConn.Exec(cc.Context, sqlStatement, vals...)
-		case "mysql":
-			mySqlConn.ExecContext(cc.Context, sqlStatement, vals...)
-		case "sqlite":
-			_, err := liteDBConn.ExecContext(cc.Context, sqlStatement, vals...)
-			if err != nil {
-				log.Fatal().Err(err).Msg("Failed to insert")
-			}
-			liteDBConn.Begin()
+		err := db.dbi.exec(cc, sqlStatement, vals)
+		if err != nil {
+			log.Fatal().Err(err).Msg(fmt.Sprintf("failed to insert %s", sqlStatement))
 		}
 
 		count++
 		if count%100 == 0 {
-			slog.Info(fmt.Sprintf("%s made %d inserts\n", threadID, count))
+			slog.Info(fmt.Sprintf("inserts", "thread", threadID, "table", table, "count", count))
 		}
 
 		duration := time.Since(start)
-		statsMap.StoreSingleSQL(threadID, duration, sqlStatement)
+		// statsMap.StoreSingleSQL(task.SQLID, threadID, duration, task.SQL)
+		statsMap.StoreSingleSQL("insert-in-"+table, threadID, duration, sqlStatement)
 	}
 }
 
@@ -111,64 +94,83 @@ func (db *Database) WriteSQLSelect(f *os.File,
 	return err
 }
 
+type countFile struct {
+	count int
+	f     *os.File
+}
+
 // reading SQL from the channel until it reads the poison pill
 func (db *Database) RunSQLs(cc *cli.Context,
 	threadID string,
 	statsMap stats.StatsMAP,
 	wg *sync.WaitGroup,
-	sql chan string) {
+	sql chan Task) {
 
-	var pgConn *pgx.Conn
-	var mySqlConn *sqlx.DB
-	var liteDBConn *sqlite.DB
-
-	switch cc.String("db-type") {
-	case "postgres":
-		pgConn, _ = pgx.Connect(cc.Context, cc.String("db-url"))
-		defer func() { pgConn.Close(cc.Context); wg.Done() }()
-	case "mysql":
-		mySqlConn, _ = sqlx.Connect("mysql", cc.String("db-url"))
-		defer func() { mySqlConn.Close(); wg.Done() }()
-	case "sqlite":
-		liteDBConn, _ = sqlite.Open("sqlite3", cc.String("db-url"))
-		defer func() { liteDBConn.Close(); wg.Done() }()
+	err := db.dbi.connect(cc)
+	if err != nil {
+		log.Fatal().Err(err).Msg(fmt.Sprintf("failed to connect to db %s", db.dbUrl))
 	}
+	defer func() { db.dbi.close(cc); wg.Done() }()
 
-	count := 0
-	f, _ := os.Create("./" + threadID + ".txt")
-	defer f.Close()
+	files := make(map[string]countFile)
+	defer func() {
+		for k, v := range files {
+			v.f.WriteString(fmt.Sprintf("thread %s executed %d queries for ID %s\n", threadID, v.count, k))
+			v.f.Close()
+		}
+	}()
 
 	for {
 		select {
-		case statement := <-sql:
-			if statement == POISON_PILL {
+		case task := <-sql:
+			if task.SQL == POISON_PILL {
 				return
 			}
 
-			start := time.Now()
-
-			switch cc.String("db-type") {
-			case "postgres":
-				pgConn.Exec(cc.Context, statement)
-			case "mysql":
-				mySqlConn.ExecContext(cc.Context, statement)
+			i, ok := files[task.SQLID]
+			if !ok {
+				dir := cc.String("out-dir") + "/" + task.SQLID
+				err := os.MkdirAll(dir, os.ModePerm)
+				if err != nil {
+					log.Fatal().Err(err).Msg("Failed to mkdir" + dir)
+				}
+				f, err := os.Create(dir + "/" + threadID + ".txt")
+				if err != nil {
+					log.Fatal().Err(err).Msg("Failed to os.create" + dir + "/" + threadID + ".txt")
+				}
+				i = countFile{0, f}
+				files[task.SQLID] = i
 			}
 
-			count++
-			if count%100 == 0 {
-				slog.Info(fmt.Sprintf("%s made %d queries\n", threadID, count))
+			start := time.Now()
+			db.dbi.execLiteral(cc, task.SQL)
+
+			i.count++
+			if i.count%100 == 0 {
+				slog.Info(fmt.Sprintf("%s made %d queries for %s", threadID, i.count, task.SQLID))
 			}
 			duration := time.Since(start)
-			statsMap.StoreSingleSQL(threadID, duration, statement)
-			f.WriteString(fmt.Sprintf("%s %s\n", duration, statement))
+			statsMap.StoreSingleSQL(task.SQLID, threadID, duration, task.SQL)
+			i.f.WriteString(fmt.Sprintf("%s %s", duration, task.SQL))
 
 		case <-time.After(1 * time.Second):
 			log.Print("no sql arrived into go function for 1 second")
 		}
 	}
-
 }
 
-func New() *Database {
-	return &Database{}
+func New(dbType string, dbUrl string) *Database {
+	var db database
+	switch dbType {
+	case "postgres":
+		db = newPg()
+	case "mysql":
+		db = newMYSQL()
+	}
+
+	return &Database{
+		dbUrl:  dbUrl,
+		dbType: dbType,
+		dbi:    db,
+	}
 }

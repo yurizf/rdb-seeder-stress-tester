@@ -36,7 +36,7 @@ var Seed = &cli.Command{
 var Stress = &cli.Command{
 	Name:        "stress",
 	Description: "Collect aws cost metrics.",
-	Usage:       "seeder-tester test",
+	Usage:       "seeder-tester stress",
 	Action:      stress.Stress, //function
 	Flags: []cli.Flag{
 		&cli.PathFlag{
@@ -55,6 +55,13 @@ var Stress = &cli.Command{
 			Name:     "db-type",
 			EnvVars:  []string{"DB_TYPE"},
 			Usage:    "The DB type: MySQL or PostgreSQL.",
+			Required: true,
+		},
+		&cli.StringFlag{
+			Name:     "out-dir",
+			Value:    ".",
+			EnvVars:  []string{"OUT_DIR"},
+			Usage:    "Path where the files with detailed stats will be placed",
 			Required: true,
 		},
 	},

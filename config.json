@@ -29,7 +29,6 @@
     ],
   "stressConfig": {
       "save_to_file": "./statements.txt",
-      "run_now": true,
       "sql":
       [
         {

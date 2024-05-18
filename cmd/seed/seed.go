@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/urfave/cli/v2"
-	dbPKG "github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stress"
 	"golang.org/x/sync/syncmap"
@@ -61,7 +61,7 @@ type whereListDef struct {
 	MaxLen int    `json:"maxLen"`
 }
 
-type db interface {
+type dbseeder interface {
 	SeedTable(cc *cli.Context,
 		threadID string,
 		table string,
@@ -113,9 +113,15 @@ func Seed(cc *cli.Context) error {
 		return err
 	}
 
-	dbSeeder := dbPKG.New()
+	// dbSeeder := db.New(cc.String("dbseeder-type"), cc.String("dbseeder-url"))
 	statsMap := stats.New()
-	err = doSeed(cc, dbSeeder, config, statsMap)
+	err = doSeed(cc,
+		// had to wrap it in a func. Passing db.New() directly gives a syntax error
+		func(dbType string, dbUrl string) dbseeder {
+			return db.New(dbType, dbUrl)
+		},
+		config,
+		statsMap)
 	if err != nil {
 		log.Fatalf("Failed to seed %s\n", err)
 		return err
@@ -124,7 +130,10 @@ func Seed(cc *cli.Context) error {
 	return nil
 }
 
-func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP) error {
+func doSeed(cc *cli.Context,
+	new func(dbtype string, dburl string) dbseeder,
+	config config,
+	statsMap stats.StatsMAP) error {
 	// initialize rand
 	// Deprecated: As of Go 1.20 there is no reason to call Seed with a random value.
 	// rand.Seed(time.Now().UTC().UnixNano())
@@ -158,13 +167,25 @@ func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP
 		var wg sync.WaitGroup
 		// spawn seed.Threads, each to insert seed.Records records from typedSlice.
 		for i := 0; i < seed.Threads; i++ {
+			s := typedSlice
+			perThread := seed.Records / seed.Threads
+			if i == seed.Threads-1 {
+				// pick all, incl the reminder
+				s = typedSlice[i*perThread:]
+				fmt.Println("SEEDING", i, i*perThread, seed.Records)
+			} else {
+				s = typedSlice[i*perThread : (i+1)*perThread]
+				fmt.Println("SEEDING", i, i*perThread, (i+1)*perThread)
+			}
+
+			dbSeeder := new(cc.String("db-type"), cc.String("db-url"))
 			wg.Add(1)
 			go dbSeeder.SeedTable(cc,
 				fmt.Sprintf("thread-%d", i),
 				seed.Table,
 				fields,
 				// make each thread insert "different" values
-				typedSlice[i+seed.Records/seed.Threads:],
+				s,
 				statsMap,
 				&wg)
 		}
@@ -172,9 +193,9 @@ func doSeed(cc *cli.Context, dbSeeder db, config config, statsMap stats.StatsMAP
 		wg.Wait()
 	}
 
-	statsMap.Print()
+	statsMap.Print(cc)
 
-	return saveSQLSelect(&config, dbSeeder, &seedMap, tableFieldTypes)
+	return saveSQLSelect(&config, new(cc.String("db-type"), cc.String("db-url")), &seedMap, tableFieldTypes)
 }
 
 // https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
@@ -218,6 +239,7 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 					m[f.Field] = randString(f.Min, f.Max)
 					if f.Unique {
 						s := m[f.Field].(string)
+						//sooner or later we will hit a new one
 						for _, ok = unique[s]; ok; {
 							m[f.Field] = rand.Intn(f.Max-f.Min+1) + f.Min
 							s = m[f.Field].(string)
@@ -248,7 +270,7 @@ func genOneTable(seedMap *syncmap.Map, s *tableSeed) {
 	seedMap.Store(s.Table, records)
 }
 
-func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableFieldTypes map[string]map[string]string) error {
+func saveSQLSelect(config *config, dbSeeder dbseeder, seedMap *syncmap.Map, tableFieldTypes map[string]map[string]string) error {
 	// generate tests
 	// the output file will look like
 	// threads = sql.Threads
@@ -256,6 +278,9 @@ func saveSQLSelect(config *config, dbSeeder db, seedMap *syncmap.Map, tableField
 	f, _ := os.Create(config.Stress.SaveSQLsToFile)
 
 	for _, sql := range config.Stress.Sql {
+		if _, err := f.WriteString(stress.ID + strings.Join(strings.Fields(sql.ID), "+") + "\n"); err != nil {
+			return err
+		}
 		if _, err := f.WriteString(stress.THREADS + strconv.Itoa(sql.Threads) + "\n"); err != nil {
 			return err
 		}
