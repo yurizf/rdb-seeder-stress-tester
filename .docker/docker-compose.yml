@@ -1,0 +1,53 @@
+version: '3'
+
+volumes:
+  postgres:
+
+# https://stackoverflow.com/a/60326527/24810373
+# https://github.com/asaikali/docker-compose-postgres/blob/master/docker-compose.yml
+#  db_url https://stackoverflow.com/questions/62563243/using-pgx-to-connect-to-postgres-db-in-go
+services:
+  seeder:
+    image: golang:1.21
+    volumes:
+      - ..:/go/src/github.com/yurizf/rdb-seeder-stress-tester
+    entrypoint: go run main.go seed
+    working_dir: /go/src/github.com/yurizf/rdb-seeder-stress-tester
+    environment:
+      - LOG_LEVEL=debug
+      - CONFIG_JSON=/go/src/github.com/yurizf/rdb-seeder-stress-tester/test/assets/1.json
+      # https://docs.docker.com/compose/networking/
+      - DB_URL=postgresql://name:password@postgres:5432/stresser
+      - DB_TYPE=postgres
+      - OUT_DIR=/go/src/github.com/yurizf/rdb-seeder-stress-tester/test
+
+  stresser:
+    image: golang:1.21
+    volumes:
+      - ..:/go/src/github.com/yurizf/rdb-seeder-stress-tester
+    entrypoint: go run main.go stress
+    working_dir: /go/src/github.com/yurizf/rdb-seeder-stress-tester
+    environment:
+      - LOG_LEVEL=debug
+      - SQLS_FILE=/go/src/github.com/yurizf/rdb-seeder-stress-tester/sqls-001.txt
+      - DB_URL=postgresql://name:password@postgres:5432/stresser
+      - DB_TYPE=postgres
+      - OUT_DIR=/go/src/github.com/yurizf/rdb-seeder-stress-tester/test
+
+  postgres:
+    image: "postgres:15"
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "password"
+      # PGDATA: "/data/postgres"
+    # https://stackoverflow.com/a/60326527/24810373
+    volumes:
+      # - postgres:/data/postgres
+      - ./init.sql:/docker-entrypoint-initdb.d/10-init.sql
+    ports:
+      - "15432:5432"
+    restart: unless-stopped
+
+  pgclient:
+    image: jbergknoff/postgresql-client
+    entrypoint: tail -f /dev/null

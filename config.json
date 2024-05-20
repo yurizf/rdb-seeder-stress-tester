@@ -1,0 +1,44 @@
+{
+  "seed" : [
+    {
+      "table": "mytable",
+      "records": 1000000,
+      "insertThreads": 100,
+      "fields":
+      [
+        {"id": "id_1",
+          "field": "myfield",
+          "fieldType": "string|int",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 30,
+          "cardinality": 10000
+        },
+        {
+          "id": "id_2",
+          "table": "mytable",
+          "field": "myfield_1",
+          "fieldType": "char|charvar|int",
+          "encoding": "utf-8",
+          "min": 10,
+          "max": 30,
+          "cardinality": 10000
+        }
+      ]
+    }
+    ],
+  "stressConfig": {
+      "save_to_file": "./statements.txt",
+      "sql":
+      [
+        {
+          "id": "statement_ID. U can use it to locate 'threads' sqls in the save-to-file",
+          "statement": "SELECT a,b,c FROM mytable a JOIN mytable_1 b ON a.a = b.b WHERE a.myfield in ( {\"table\":\"NyTable\", \"field\":\"myfield\", \"minlen\": 40, \"maxlen\": 100} )",
+          "repeat" : 10000,
+          "threads": 100,
+          "comment": "the in list {escaped json} will be randomly populated from the seeded data"
+        }
+      ]
+  }
+}
+
