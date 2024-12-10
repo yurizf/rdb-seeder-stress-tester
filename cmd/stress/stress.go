@@ -42,17 +42,16 @@ func Stress(cc *cli.Context) error {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 
-	statsChan := make(chan stats.OneStatement, 1)
 	return doStress(cc,
 		func(dbType string, dbUrl string) run {
 			return db.New(dbType, dbUrl)
 		},
-		statsChan)
+	)
 }
 
 func doStress(cc *cli.Context,
 	new func(dbtype string, dburl string) run,
-	statsChan chan stats.OneStatement) error {
+) error {
 	path := cc.Path("input-file")
 	if len(path) == 0 {
 		return fmt.Errorf("no input file path given")
@@ -62,8 +61,9 @@ func doStress(cc *cli.Context,
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	defer file.Close()
+
+	statsChan := make(chan stats.OneStatement, 1)
 
 	scanner := bufio.NewScanner(file)
 	const maxCapacity int = 4194304
@@ -83,6 +83,7 @@ func doStress(cc *cli.Context,
 	wgStats.Add(1)
 	go stats.Collect(cc, statsChan, &wgStats)
 
+	sqlGroups := make(map[string]int)
 	for scanner.Scan() {
 		// get a line
 		s := scanner.Text()
@@ -92,6 +93,8 @@ func doStress(cc *cli.Context,
 			if err != nil {
 				return err
 			}
+			sqlGroups[id] = 0
+
 			scanner.Scan()
 			s = scanner.Text()
 			_, err = fmt.Sscanf(s, THREADS+"%d", &threadsCnt)
@@ -99,7 +102,7 @@ func doStress(cc *cli.Context,
 				return err
 			}
 			if threadsCnt < 1 {
-				log.Fatal(fmt.Sprintf("Invalid threads count for id %s %", id, threadsCnt))
+				log.Fatal(fmt.Sprintf("Invalid threads count for id %s %d", id, threadsCnt))
 			}
 			// batch == 0 means beginning of the file, nothing is running yet
 			if count > 0 {
@@ -109,6 +112,7 @@ func doStress(cc *cli.Context,
 				slog.Info("Wrote poison pills to the channel", "count", oldThreadsCnt)
 				// wait till all threadsCnt swallow poison pills, one pill per thread
 				wg.Wait()
+				count = 0
 			}
 
 			if threadsCnt > 0 {
@@ -133,7 +137,7 @@ func doStress(cc *cli.Context,
 			s,
 		}
 		count++
-		// fmt.Printf("Read and send %d SQLs\n", count)
+		sqlGroups[id] = count
 		if count%100 == 0 {
 			slog.Info("sqls fed", "ID", id, "count", count)
 		}
@@ -151,6 +155,12 @@ func doStress(cc *cli.Context,
 		ID: stats.POISON_PILL,
 	}
 	wgStats.Wait()
+
+	for k, v := range sqlGroups {
+		if v == 0 {
+			return fmt.Errorf("no sql statements for id  %s", k)
+		}
+	}
 
 	return nil
 }

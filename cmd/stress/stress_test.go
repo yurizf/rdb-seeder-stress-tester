@@ -6,6 +6,8 @@ import (
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
 	"log"
+	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
@@ -16,12 +18,16 @@ import (
 type mockSelect struct{}
 
 func (s *mockSelect) PoisonPill() string {
-	return db.POISON_PILL
+	return stats.POISON_PILL
 }
+
+// type run interface {
+// RunSQLs(cc *cli.Context, threadID string, statsChan chan stats.OneStatement, wg *sync.WaitGroup, sql chan db.Task)
 
 func (s *mockSelect) RunSQLs(cc *cli.Context,
 	threadID string,
-	statsMap stats.StatsMAP,
+	// statsMap stats.StatsMAP,
+	statsChan chan stats.OneStatement,
 	wg *sync.WaitGroup,
 	sql chan db.Task) {
 
@@ -31,13 +37,18 @@ func (s *mockSelect) RunSQLs(cc *cli.Context,
 	for {
 		select {
 		case task := <-sql:
-			if task.SQL == db.POISON_PILL {
+			if task.SQL == stats.POISON_PILL {
 				log.Print(threadID, "   poison pill read from the channel")
 				count = 0
 				return
 			} else {
 				log.Print(threadID, "   ", task.SQL)
-				statsMap.StoreSingleSQL(task.SQLID, threadID, 10*time.Second, task.SQL)
+				statsChan <- stats.OneStatement{
+					ID:       task.SQLID,
+					ThreadID: threadID,
+					SQL:      task.SQL,
+					Duration: time.Duration(rand.IntN(10)) * time.Second,
+				}
 				count++
 			}
 		case <-time.After(10 * time.Second):
@@ -47,26 +58,44 @@ func (s *mockSelect) RunSQLs(cc *cli.Context,
 
 }
 
+func outDir() string {
+	_, fname, _, _ := runtime.Caller(0)
+	top := filepath.Dir(filepath.Dir(filepath.Dir(fname)))
+	ret := filepath.Join(top, "test", "stress-test-out-dir")
+	if err := os.MkdirAll(ret, 0755); err != nil {
+		log.Fatalf("failed to create directory %s: %v", ret, err)
+		return ""
+	}
+	return ret
+}
+
 func mockCLIConetext() *cli.Context {
+	app := cli.NewApp()
+	fs := flag.NewFlagSet("", flag.ExitOnError)
+
 	fl := flag.Flag{
 		Name: "input-file",
 	}
-	fs := flag.NewFlagSet("", flag.ExitOnError)
-	app := cli.NewApp()
-	// define a flag with default value
 	fs.String(fl.Name, "", "")
-	_, fname, _, _ := runtime.Caller(0)
-	top := filepath.Dir(filepath.Dir(filepath.Dir(fname)))
 	// set a new value
-	fs.Set(fl.Name, top+"/test/assets/sqls.txt")
-	return cli.NewContext(app, fs, nil)
+	outDir := outDir()
+	fs.Set(fl.Name, filepath.Join(filepath.Dir(outDir), "assets", "sqls.txt"))
+
+	fl = flag.Flag{
+		Name: "out-dir",
+	}
+	fs.String(fl.Name, "", "")
+	fs.Set(fl.Name, outDir)
+
+	cc := cli.NewContext(app, fs, nil)
+	cc.Command.Name = "test"
+	return cc
 }
 
 func Test_doStress(t *testing.T) {
 	type args struct {
-		cc    *cli.Context
-		db    run
-		stats stats.StatsMAP
+		cc *cli.Context
+		db run
 	}
 	tests := []struct {
 		name    string
@@ -76,10 +105,8 @@ func Test_doStress(t *testing.T) {
 		{
 			name: "test-stress",
 			args: args{
-				cc:    mockCLIConetext(),
-				db:    &mockSelect{},
-				stats: stats.New(),
-				// TODO: Add test cases.
+				cc: mockCLIConetext(),
+				db: &mockSelect{},
 			},
 			wantErr: false,
 		},
@@ -89,10 +116,10 @@ func Test_doStress(t *testing.T) {
 			if err := doStress(tt.args.cc,
 				func(dbType string, dbUrl string) run {
 					return tt.args.db
-				},
-				tt.args.stats); (err != nil) != tt.wantErr {
+				}); (err != nil) != tt.wantErr {
 				t.Errorf("doStress() error = %v, wantErr %v", err, tt.wantErr)
 			}
+
 		})
 	}
 }

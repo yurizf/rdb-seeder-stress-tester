@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/sync/syncmap"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"text/tabwriter"
 	"time"
@@ -34,57 +34,8 @@ type Stats struct {
 	histoDescription []string
 }
 
-type StatsMAP struct {
-	m *syncmap.Map
-}
-
-func (m *StatsMAP) StoreSingleSQL(key1 string, key2 string, d time.Duration, sql string) {
-	key := key1 + "\n" + key2
-	s, ok := m.m.Load(key)
-	if !ok {
-		s = Stats{
-			999 * time.Hour,
-			0 * time.Second,
-			0 * time.Second,
-			0,
-			"",
-			"",
-			make([]int, 1000),
-			make([]string, 1000),
-		}
-	}
-
-	stats := s.(Stats)
-	stats.Count++
-
-	if d < stats.shortest {
-		stats.shortest = d
-		stats.shortestSQL = sql
-	}
-
-	if d > stats.longest {
-		stats.longest = d
-		stats.longestSQL = sql
-	}
-	stats.total += d
-	stats.Histogram[slot(d)]++
-
-	m.m.Store(key, stats)
-}
-
 func slot(t time.Duration) int {
 	return min(int(t/(100*time.Millisecond)), 999)
-}
-
-func (m *StatsMAP) Dump() map[string]Stats {
-	retVal := make(map[string]Stats)
-	m.m.Range(func(k, v any) bool {
-		threadID := k.(string)
-		stats := v.(Stats)
-		retVal[threadID] = stats
-		return true
-	})
-	return retVal
 }
 
 func printStats(w io.Writer, id string, v *Stats) {
@@ -111,16 +62,22 @@ func printStats(w io.Writer, id string, v *Stats) {
 	tw.Flush()
 }
 
+// put this in a func to ease unit tests
+func DurationsFileName(cc *cli.Context) string {
+	return filepath.Join(cc.String("out-dir"), cc.Command.Name+"-durations.txt")
+}
+
 func Collect(cc *cli.Context,
 	statsChan chan OneStatement,
 	wg *sync.WaitGroup) {
 
-	fname := cc.String("out-dir") + "/" + cc.Command.Name + "durations.txt"
+	fname := DurationsFileName(cc)
 	f, err := os.Create(fname)
 	if err != nil {
 		log.Fatalf("failed to create  stats file %s: %v", fname, err)
 	}
 	defer f.Close()
+
 	aggregate := make(map[string]Stats)
 
 	for {
