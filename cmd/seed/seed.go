@@ -114,14 +114,12 @@ func Seed(cc *cli.Context) error {
 	}
 
 	// dbSeeder := db.New(cc.String("dbseeder-type"), cc.String("dbseeder-url"))
-	statsChan := make(chan stats.OneStatement, 1)
 	err = doSeed(cc,
 		// had to wrap it in a func. Passing db.New() directly gives a syntax error
 		func(dbType string, dbUrl string) dbseeder {
 			return db.New(dbType, dbUrl)
 		},
-		config,
-		statsChan)
+		config)
 	if err != nil {
 		log.Fatalf("Failed to seed %s\n", err)
 		return err
@@ -133,10 +131,12 @@ func Seed(cc *cli.Context) error {
 func doSeed(cc *cli.Context,
 	new func(dbtype string, dburl string) dbseeder,
 	config config,
-	statsChan chan stats.OneStatement) error {
+) error {
 	// initialize rand
 	// Deprecated: As of Go 1.20 there is no reason to call Seed with a random value.
 	// rand.Seed(time.Now().UTC().UnixNano())
+
+	statsChan := make(chan stats.OneStatement, 1)
 
 	// table -> []map[fieldName]any: int | string. To keep all generated values per table
 	var seedMap syncmap.Map

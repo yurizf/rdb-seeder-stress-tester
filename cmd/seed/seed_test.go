@@ -1,11 +1,15 @@
 package seed
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/urfave/cli/v2"
+	"github.com/yurizf/rdb-seeder-stress-tester/cmd/db"
 	"github.com/yurizf/rdb-seeder-stress-tester/cmd/stats"
+	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,20 +20,31 @@ import (
 	"time"
 )
 
-type mockDB struct{}
+type mockDB struct {
+	// just to use its WriteSQLSelect method
+	d *db.Database
+}
 
 func (db *mockDB) SeedTable(cc *cli.Context,
 	threadID string,
 	table string,
 	fields []string,
 	fieldValues []map[string]any,
-	statsMap stats.StatsMAP,
+	statsChan chan stats.OneStatement,
 	wg *sync.WaitGroup) {
 
 	defer wg.Done()
 	slog.Debug("test seeding table", "threadID", threadID, "sql", "test-sql with"+strings.Join(fields, ","), "fieldValues", fieldValues)
-	for _, _ = range fieldValues {
-		statsMap.StoreSingleSQL("insert", threadID, 1*time.Second, "test-sql with"+strings.Join(fields, ","))
+	for range fieldValues {
+		statsChan <- stats.OneStatement{
+			ID:       "insert-in-table" + table,
+			ThreadID: threadID,
+			SQL:      "test-sql with" + strings.Join(fields, ","),
+			Duration: 1 * time.Second,
+		}
+
+		// statsMap.StoreSingleSQL("insert", threadID, 1*time.Second, "test-sql with"+strings.Join(fields, ","))
+		// func (m *StatsMAP) StoreSingleSQL(key1 string, key2 string, d time.Duration, sql string)
 	}
 }
 
@@ -44,22 +59,38 @@ func (db *mockDB) WriteSQLSelect(f *os.File, sqlStatement string, jsonStrings []
 		}
 	}
 
+	db.d.WriteSQLSelect(f, sqlStatement, jsonStrings, tokens)
+
 	return nil
 }
 
+func outDir() string {
+	_, fname, _, _ := runtime.Caller(0)
+	top := filepath.Dir(filepath.Dir(filepath.Dir(fname)))
+	ret := filepath.Join(top, "test", "seed-test-out-dir")
+	if err := os.MkdirAll(ret, 0755); err != nil {
+		log.Fatalf("failed to create directory %s: %v", ret, err)
+		return ""
+	}
+	return ret
+}
+
 func mockCLIConetext() *cli.Context {
+
 	fl := flag.Flag{
 		Name: "out-dir",
 	}
 	fs := flag.NewFlagSet("", flag.ExitOnError)
 	app := cli.NewApp()
+
 	// define a flag with default value
 	fs.String(fl.Name, "", "")
-	_, fname, _, _ := runtime.Caller(0)
-	top := filepath.Dir(filepath.Dir(filepath.Dir(fname)))
 	// set a new value
-	fs.Set(fl.Name, top+"/test")
-	return cli.NewContext(app, fs, nil)
+	fs.Set(fl.Name, outDir())
+
+	cc := cli.NewContext(app, fs, nil)
+	cc.Command.Name = "test"
+	return cc
 }
 
 func Test_doSeed(t *testing.T) {
@@ -70,7 +101,6 @@ func Test_doSeed(t *testing.T) {
 		cc       *cli.Context
 		dbSeeder func(dbType string, dbUrl string) dbseeder
 		config   config
-		stats    stats.StatsMAP
 	}
 	tests := []struct {
 		name    string
@@ -83,9 +113,10 @@ func Test_doSeed(t *testing.T) {
 				// cc:       &cli.Context{},
 				cc: mockCLIConetext(),
 				dbSeeder: func(dbType string, dbUrl string) dbseeder {
-					return &mockDB{}
+					return &mockDB{
+						d: db.New("postgres", "fake-db-url"),
+					}
 				},
-				stats: stats.New(),
 				config: config{
 					Seed: []tableSeed{
 						{
@@ -136,7 +167,7 @@ func Test_doSeed(t *testing.T) {
 						},
 					}, // tableseed
 					Stress: stressConfig{
-						SaveSQLsToFile: "./test-sqls.sql",
+						SaveSQLsToFile: filepath.Join(outDir(), "test-sqls.sql"),
 						Sql: []sql{
 							{
 								ID:        "sql-query-1",
@@ -146,7 +177,7 @@ func Test_doSeed(t *testing.T) {
 								Comment:   "blah",
 							},
 							{
-								ID:        "sql-query-1",
+								ID:        "sql-query-2",
 								Statement: `SELECT * FROM Table-2 WHERE Field_2_of_Table_2 in ({"table":"Table_2", "field": "Field_2_of_Table_2", "minlen": 20, "maxlen": 40})`,
 								Repeat:    5,
 								Threads:   7,
@@ -166,26 +197,50 @@ func Test_doSeed(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config, tt.args.stats); (err != nil) != tt.wantErr {
+			if err := doSeed(tt.args.cc, tt.args.dbSeeder, tt.args.config); (err != nil) != tt.wantErr {
 				t.Errorf("doSeed() error = %v, wantErr %v", err, tt.wantErr)
 			}
 
-			stats := tt.args.stats.Dump()
 			expectedCnt := 0
 			for _, s := range tt.args.config.Seed {
 				expectedCnt += s.Records
 			}
 
-			actualCnt := 0
-			for _, v := range stats {
-				actualCnt += v.Count
+			durationsFile := stats.DurationsFileName(tt.args.cc)
+			file, err := os.Open(durationsFile)
+			if err != nil {
+				t.Errorf("fail to open durations file: %v", err)
 			}
+
+			actualCnt, err := lineCounter(file)
+			if err != nil {
+				t.Errorf("fail to get line count: %v", err)
+			}
+
 			if expectedCnt != actualCnt {
 				t.Errorf("expected count %d does not match actual count %d", expectedCnt, actualCnt)
 			}
 
-			tt.args.stats.Print(tt.args.cc)
 			slog.Info(tt.name)
 		})
+	}
+}
+
+func lineCounter(r io.Reader) (int, error) {
+	buf := make([]byte, 32*1024)
+	count := 0
+	lineSep := []byte{'\n'}
+
+	for {
+		c, err := r.Read(buf)
+		count += bytes.Count(buf[:c], lineSep)
+
+		switch {
+		case err == io.EOF:
+			return count, nil
+
+		case err != nil:
+			return count, err
+		}
 	}
 }
