@@ -1,14 +1,23 @@
 ### THE WHAT
-I've been looking for a very simple that would do 2 things:
-- seed the DB tables selected fields with randomly generated integer and text data per configuration: 
+As a DevOps/SRE engineer, I spent about 20-25% of my time analyzing the causes of the slow SQL queries.
+Which is the direct result of people using ORM without giving a second thought about what SQL it produces
+and skipping any serious design, optimization and stress testing to get the actual numbers before it went to production.
+Most of such ORM generated queries had `field in (long list of values)` in its WHERE clause.
+
+So, I've been looking for a very simple that would do 2 things:seeds the DB tables and generats stress test SQLs from the seeds. 
+And of course collects the stats during both steps.
+
+So, this tool does the following:
+- seeds the DB tables selected fields with randomly generated integer and text data per configuration: 
 min and max integers and min and max length text;
-- record and report the timing of the inserts done by the configured number of threads;
-- generate SQLs for stress testing that may use those randomly generated data. 
+- records and reports the timing of the inserts done by the configured number of threads;
+- generates SQLs for stress testing that may use those randomly generated data. 
 I was particularly interested in the SQLs with clauses like WHERE field IN (value1, value2, ..., value10000), 
 where the values are from the set randomly generated at the prior step. I've seen way too many of those peg the DB
 - This is where the seeding step ends. The next step - stress testing
 - Stressing: run the generated SQLs in the configured number of threads and record the timings: max, min and the timing histogram with 100ms granularity
-- This is it! As I said, very simple
+
+This is it! As I said, very simple
 
 ### Configuration
 
